@@ -1,6 +1,6 @@
 {
   "name": "rotor-studio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "基于 Three.js 与 OpenCascade 的回转体参数化实体建模工具",

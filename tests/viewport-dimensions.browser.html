@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>尺寸标注 DOM 回归 · Rotor Studio</title>
+  <style>
+    :root { color-scheme: light; font: 11px/1.7 system-ui, "Microsoft YaHei", sans-serif; color: #29454f; background: #f4f7f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 28px; }
+    main { max-width: 850px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: 12px; }
+    h2 { margin: 0 0 12px; font-size: 11px; }
+    p { margin: 8px 0; }
+    .muted { color: #6b828b; }
+    .panel { margin-top: 18px; padding: 18px; border: 1px solid #d7e3e7; border-radius: 6px; background: white; }
+    .stage { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; min-height: 100px; padding: 20px; border: 1px dashed #a6c7cc; border-radius: 4px; background: #f1f7f7; }
+    .rotor-dimension-label, button { font: inherit; }
+    .rotor-dimension-label { min-height: 32px; padding: 5px 10px; border: 1px solid #a5c8cd; border-radius: 4px; color: #197d8c; background: white; cursor: text; }
+    button:focus-visible { outline: 2px solid #197d8c; outline-offset: 3px; }
+    .rotor-dimension-label:hover { background: #e9f5f5; }
+    .ordinary-button, #reset-counters { padding: 5px 10px; border: 1px solid #d7e3e7; border-radius: 4px; color: #516d78; background: #fff; cursor: pointer; }
+    .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+    .metric { padding: 12px; background: #f7fafb; border-radius: 4px; }
+    .metric strong { display: block; font-size: 12px; color: #197d8c; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    td, th { padding: 6px 8px; text-align: left; border-bottom: 1px solid #e6eef0; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; }
+    pre { padding: 12px; overflow: auto; max-height: 260px; background: #f7fafb; border-radius: 4px; }
+    .instructions { padding-left: 20px; }
+    .instructions li { margin: 5px 0; }
+    .heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    #module-state { color: #197d8c; }
+    @media (max-width: 600px) { body { padding: 16px; } .metrics { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>尺寸标注 · 浏览器原生交互回归</h1>
+    <p class="muted">此页面直接调用产品的 <code>createDimensionButton</code>，不创建 Three.js 场景或 WebGLRenderer。只用于开发验收，不属于产品操作流程。</p>
+    <p id="module-state" role="status">测试模块载入中</p>
+
+    <section class="panel">
+      <div class="heading"><h2>真实尺寸按钮</h2><button type="button" id="reset-counters">重置计数</button></div>
+      <div class="stage" id="event-parent" aria-label="尺寸按钮测试区域">
+        <div id="dimension-buttons" style="display:contents"></div>
+        <button type="button" class="ordinary-button" id="bubble-control">普通按钮 · 冒泡对照</button>
+      </div>
+      <div class="metrics" aria-live="polite">
+        <div class="metric">编辑回调次数<strong id="callback-count">0</strong></div>
+        <div class="metric">尺寸按钮事件冒泡总数<strong id="dimension-bubble-count">0</strong></div>
+        <div class="metric">回调锚点标签 / 类型<strong id="anchor-type">尚未触发</strong></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>回调目标与事件传播</h2>
+      <p>最后目标：<code id="last-target">尚未触发</code></p>
+      <table>
+        <thead><tr><th>父层收到的事件</th><th>尺寸按钮</th><th>普通对照按钮</th></tr></thead>
+        <tbody id="event-counts"></tbody>
+      </table>
+      <pre id="callback-history" aria-label="回调记录">[]</pre>
+    </section>
+
+    <section class="panel">
+      <h2>验收顺序</h2>
+      <ol class="instructions">
+        <li>点击“段长 28 mm”：回调次数应增加 1，目标为 <code>segment-length / demo-shaft</code>。</li>
+        <li>保持该按钮焦点，分别按 Enter、Space：每次各增加 1 次回调，不能重复激活。</li>
+        <li>点击“直径 Ø30 mm”和“总长 180 mm”：应分别返回 <code>segment-diameter</code>、<code>total-length</code>。</li>
+        <li>尺寸按钮上的点击、指针、双击、触摸以及 Enter / Space 键盘事件不应冒泡到父层，尺寸冒泡计数应保持 0。</li>
+        <li>点击普通对照按钮：对照列应增加，编辑回调次数保持不变，用以确认事件记录器工作。</li>
+      </ol>
+      <p class="muted">双击由浏览器产生两次正常 click，随后产生一次 dblclick；这里只要求 dblclick 被隔离，不将两次 click 误判为键盘重复触发。Tab 不计入冒泡计数。</p>
+    </section>
+  </main>
+
+  <script type="module">
+    import { createDimensionButton } from '../src/viewport.js';
+
+    const eventTypes = ['click', 'pointerdown', 'pointerup', 'dblclick', 'touchstart', 'touchend', 'keydown', 'keyup'];
+    const parent = document.querySelector('#event-parent');
+    const host = document.querySelector('#dimension-buttons');
+    const callbacks = [];
+    const counts = Object.fromEntries(eventTypes.map((type) => [type, { dimension: 0, control: 0 }]));
+    const rows = new Map();
+
+    for (const type of eventTypes) {
+      const row = document.createElement('tr');
+      const name = document.createElement('td');
+      name.textContent = type;
+      const dimension = document.createElement('td');
+      const control = document.createElement('td');
+      dimension.dataset.event = type;
+      dimension.dataset.channel = 'dimension';
+      control.dataset.event = type;
+      control.dataset.channel = 'control';
+      row.append(name, dimension, control);
+      document.querySelector('#event-counts').append(row);
+      rows.set(type, { dimension, control });
+
+      // 监听冒泡阶段；产品按钮的 stopPropagation 应阻止事件到达此处。
+      parent.addEventListener(type, (event) => {
+        if ((type === 'keydown' || type === 'keyup') && !['Enter', ' ', 'Spacebar'].includes(event.key)) return;
+        const channel = event.target.closest('[data-dimension-kind]') ? 'dimension'
+          : event.target.closest('#bubble-control') ? 'control' : null;
+        if (!channel) return;
+        counts[type][channel] += 1;
+        renderResults();
+      });
+    }
+
+    const definitions = [
+      { text: '段长 28 mm', target: { kind: 'segment-length', id: 'demo-shaft' }, label: '验证轴段的长度，当前 28 mm' },
+      { text: '直径 Ø30 mm', target: { kind: 'segment-diameter', id: 'demo-shaft' }, label: '验证轴段的直径，当前 30 mm' },
+      { text: '总长 180 mm', target: { kind: 'total-length' }, label: '零件总长，当前 180 mm' },
+    ];
+    for (const definition of definitions) {
+      host.append(createDimensionButton({
+        documentRef: document,
+        ...definition,
+        onActivate(target, anchorElement) {
+          callbacks.push({
+            sequence: callbacks.length + 1,
+            target,
+            anchorTag: anchorElement.tagName,
+            anchorType: anchorElement.type,
+            anchorConnected: anchorElement.isConnected,
+          });
+          renderResults();
+        },
+      }));
+    }
+
+    function renderResults() {
+      document.querySelector('#callback-count').textContent = callbacks.length;
+      document.querySelector('#dimension-bubble-count').textContent = Object.values(counts).reduce((sum, item) => sum + item.dimension, 0);
+      const last = callbacks.at(-1);
+      document.querySelector('#anchor-type').textContent = last ? `${last.anchorTag} / ${last.anchorType}` : '尚未触发';
+      document.querySelector('#last-target').textContent = last ? JSON.stringify(last.target) : '尚未触发';
+      document.querySelector('#callback-history').textContent = JSON.stringify(callbacks, null, 2);
+      for (const type of eventTypes) {
+        rows.get(type).dimension.textContent = counts[type].dimension;
+        rows.get(type).control.textContent = counts[type].control;
+      }
+    }
+
+    document.querySelector('#reset-counters').addEventListener('click', () => {
+      callbacks.length = 0;
+      for (const type of eventTypes) counts[type] = { dimension: 0, control: 0 };
+      renderResults();
+    });
+    renderResults();
+    document.querySelector('#module-state').textContent = '已就绪：3 个原生尺寸按钮，未创建 WebGL 上下文';
+  </script>
+</body>
+</html>

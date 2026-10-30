@@ -63,16 +63,52 @@ function lineGeometry(coordinates) {
   return geometry;
 }
 
+/** 创建可直接编辑的尺寸按钮；不依赖 WebGL，使用原生按钮的键盘激活行为。 */
+export function createDimensionButton({ documentRef = globalThis.document, text, target, label, onActivate }) {
+  const element = documentRef.createElement('button');
+  const editTarget = Object.freeze({ ...target });
+  element.type = 'button';
+  element.textContent = text;
+  element.className = 'rotor-dimension-label is-editable';
+  element.dataset.dimensionKind = editTarget.kind;
+  if (editTarget.id) element.dataset.segmentId = editTarget.id;
+  element.title = `${label}；点击或按 Enter / 空格编辑`;
+  element.setAttribute('aria-label', `编辑${label}`);
+  element.setAttribute('aria-haspopup', 'dialog');
+  element.style.pointerEvents = 'auto';
+  element.style.touchAction = 'manipulation';
+
+  // 尺寸按钮只占自身区域，不让按钮上的操作启动视口旋转、双击适配或触摸拖动。
+  for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'mousedown', 'mousemove', 'mouseup', 'dblclick', 'touchstart', 'touchmove', 'touchend', 'touchcancel', 'wheel', 'contextmenu']) {
+    element.addEventListener(type, (event) => {
+      event.stopPropagation();
+      if (type === 'dblclick') event.preventDefault();
+    }, { passive: type.startsWith('touch') || type === 'wheel' });
+  }
+  for (const type of ['keydown', 'keyup']) {
+    element.addEventListener(type, (event) => {
+      if (['Enter', ' ', 'Spacebar'].includes(event.key)) event.stopPropagation();
+    });
+  }
+  element.addEventListener('click', (event) => {
+    event.stopPropagation();
+    onActivate({ ...editTarget }, element);
+  });
+  return element;
+}
+
 /** 单一 Three.js 场景；所有建模坐标与显示尺寸均使用毫米。 */
 export class PartViewport {
-  constructor(container, { onSelect = () => {}, onAutoRotateChange = () => {} } = {}) {
+  constructor(container, { onSelect = () => {}, onAutoRotateChange = () => {}, onDimensionEdit = () => {} } = {}) {
     this.container = container;
     this.onSelect = onSelect;
     this.onAutoRotateChange = onAutoRotateChange;
+    this.onDimensionEdit = onDimensionEdit;
     this.theme = 'light';
     this.palette = PALETTES.light;
     this.mode = 'edges';
     this.dimensionsVisible = true;
+    this.dimensionEditing = false;
     this.sectionEnabled = false;
     this.selectedId = null;
     this.model = null;
@@ -385,16 +421,27 @@ export class PartViewport {
     this.dirty = true;
   }
 
-  _label(text, position, { accent = false, name = false } = {}) {
-    const element = document.createElement('div');
-    element.textContent = text;
-    element.className = `rotor-dimension-label${accent ? ' is-selected' : ''}`;
-    element.style.cssText = `position:absolute;left:0;top:0;transform:translate(-50%,-50%);white-space:nowrap;font:500 ${name ? 11 : 10}px/1.4 ui-monospace,SFMono-Regular,Consolas,"Microsoft YaHei",monospace;color:${accent ? `#${new THREE.Color(this.palette.accent).getHexString()}` : this.palette.label};background:${this.palette.labelBackground};padding:2px 5px;border-radius:3px;letter-spacing:.01em;`;
+  _label(text, position, { accent = false, name = false, target, label } = {}) {
+    const element = createDimensionButton({
+      documentRef: this.labelLayer.ownerDocument,
+      text,
+      target,
+      label,
+      onActivate: (editTarget, anchorElement) => {
+        this.setAutoRotate(false);
+        this.onDimensionEdit(editTarget, anchorElement);
+      },
+    });
+    if (accent) element.classList.add('is-selected');
+    element.style.cssText = `position:absolute;left:0;top:0;transform:translate(-50%,-50%);white-space:nowrap;font:500 ${name ? 11 : 10}px/1.4 ui-monospace,SFMono-Regular,Consolas,"Microsoft YaHei",monospace;color:var(--dimension-label-color,${accent ? `#${new THREE.Color(this.palette.accent).getHexString()}` : this.palette.label});background:var(--dimension-label-bg,${this.palette.labelBackground});border:1px solid var(--dimension-label-border,transparent);padding:2px 5px;margin:0;border-radius:3px;letter-spacing:.01em;pointer-events:auto;touch-action:manipulation;cursor:text;appearance:none;`;
     this.labelLayer.appendChild(element);
-    this.labels.push({ element, position: new THREE.Vector3(...position) });
+    this.labels.push({ element, position: new THREE.Vector3(...position), target: { ...target } });
   }
 
   _createDimensions() {
+    // 只迁移旧尺寸按钮自身的焦点，不能干扰共享输入框或其他工作区控件。
+    const activeElement = this.labelLayer.ownerDocument.activeElement;
+    const focusedTarget = this.labels.find(({ element }) => element === activeElement)?.target;
     while (this.dimensionGroup.children.length) releaseObject(this.dimensionGroup.children[0]);
     this.labels.forEach(({ element }) => element.remove());
     this.labels = [];
@@ -418,7 +465,11 @@ export class PartViewport {
     dimension(0, this.length, y - spacing * 2, points);
     line(points, [0, -this.radius, z], [0, y - spacing * 2 - tick, z]);
     line(points, [this.length, -this.radius, z], [this.length, y - spacing * 2 - tick, z]);
-    this._label(`L ${fmt(this.length)} mm`, [this.length / 2, y - spacing * 2, z], { name: true });
+    this._label(`L ${fmt(this.length)} mm`, [this.length / 2, y - spacing * 2, z], {
+      name: true,
+      target: { kind: 'total-length' },
+      label: `零件总长，当前 ${fmt(this.length)} mm`,
+    });
 
     const shownSegments = this.layout.length <= 9 ? this.layout : this.layout.filter((segment) => segment.id === this.selectedId);
     shownSegments.forEach((segment) => {
@@ -427,18 +478,32 @@ export class PartViewport {
       dimension(segment.start, segment.end, y, target);
       line(target, [segment.start, -this.radius - spacing, z], [segment.start, y + tick, z]);
       line(target, [segment.end, -this.radius - spacing, z], [segment.end, y + tick, z]);
-      this._label(fmt(segment.length), [(segment.start + segment.end) / 2, y, z], { accent: active });
+      this._label(fmt(segment.length), [(segment.start + segment.end) / 2, y, z], {
+        accent: active,
+        target: { kind: 'segment-length', id: segment.id },
+        label: `${segment.name}的长度，当前 ${fmt(segment.length)} mm`,
+      });
     });
 
     const selected = this.layout.find((segment) => segment.id === this.selectedId);
     if (selected) {
-      const diameter = segmentDiameter(selected);
-      const r = diameter / 2;
-      const xx = (selected.start + selected.end) / 2;
-      const zz = r + spacing * 1.5;
-      line(accentPoints, [xx, -r, zz], [xx, r, zz]);
-      [-r, r].forEach((yy) => line(accentPoints, [xx - tick, yy, zz], [xx + tick, yy, zz]));
-      this._label(`${selected.type === 'gear' ? '齿顶 ' : ''}⌀${fmt(diameter)}`, [xx, r + spacing * 1.2, zz], { accent: true });
+      const diameterLabels = selected.type === 'cone'
+        ? [
+          { kind: 'segment-diameter', diameter: selected.diameter, x: selected.start, prefix: '左径 ', label: '左端直径', below: false },
+          { kind: 'segment-end-diameter', diameter: selected.endDiameter, x: selected.end, prefix: '右径 ', label: '右端直径', below: true },
+        ]
+        : [{ kind: selected.type === 'gear' ? 'gear-tip-diameter' : 'segment-diameter', diameter: segmentDiameter(selected), x: (selected.start + selected.end) / 2, prefix: selected.type === 'gear' ? '齿顶 ' : '', label: selected.type === 'gear' ? '齿顶圆直径' : '直径', below: false }];
+      diameterLabels.forEach(({ kind, diameter, x, prefix, label, below }) => {
+        const r = diameter / 2;
+        const zz = r + spacing * 1.5;
+        line(accentPoints, [x, -r, zz], [x, r, zz]);
+        [-r, r].forEach((yy) => line(accentPoints, [x - tick, yy, zz], [x + tick, yy, zz]));
+        this._label(`${prefix}⌀${fmt(diameter)}`, [x, (below ? -1 : 1) * (r + spacing * 1.2), zz], {
+          accent: true,
+          target: { kind, id: selected.id },
+          label: `${selected.name}的${label}，当前 ${fmt(diameter)} mm${kind === 'gear-tip-diameter' ? '，修改将联动模数' : ''}`,
+        });
+      });
     }
     [
       [points, this.palette.axis, 0.8],
@@ -449,6 +514,10 @@ export class PartViewport {
       lines.renderOrder = 4;
       this.dimensionGroup.add(lines);
     });
+    if (focusedTarget && this.dimensionsVisible) {
+      const replacement = this.labels.find(({ target }) => target.kind === focusedTarget.kind && (target.id || '') === (focusedTarget.id || ''));
+      replacement?.element.focus({ preventScroll: true });
+    }
   }
 
   _updateLabels() {
@@ -544,6 +613,22 @@ export class PartViewport {
     this.dirty = true;
   }
 
+  setDimensionEditing(editing) {
+    const next = Boolean(editing);
+    if (next === this.dimensionEditing) return;
+    this.dimensionEditing = next;
+    if (next) {
+      this._controlsEnabledBeforeDimensionEdit = this.controls.enabled;
+      this.controls.enabled = false;
+    } else {
+      this.controls.enabled = this._controlsEnabledBeforeDimensionEdit ?? true;
+      delete this._controlsEnabledBeforeDimensionEdit;
+    }
+    // 结束尺寸编辑只恢复交互，不恢复进入编辑前的自动旋转状态。
+    this.setAutoRotate(false);
+    this.dirty = true;
+  }
+
   setSection(enabled) {
     this.sectionEnabled = Boolean(enabled);
     const clippingPlanes = this.sectionEnabled ? [this.sectionPlane] : [];
@@ -558,8 +643,9 @@ export class PartViewport {
 
   setAutoRotate(enabled) {
     this._transition = null;
-    this.controls.autoRotate = Boolean(enabled);
-    this.onAutoRotateChange(Boolean(enabled));
+    const next = Boolean(enabled) && !this.dimensionEditing;
+    this.controls.autoRotate = next;
+    this.onAutoRotateChange(next);
     this.dirty = true;
   }
 
@@ -613,7 +699,7 @@ export class PartViewport {
     if (this.disposed) return;
     this._frame = requestAnimationFrame(() => this._animate());
     const delta = Math.min(this._clock.getDelta(), 0.1);
-    if (this._transition) {
+    if (this._transition && !this.dimensionEditing) {
       const t = Math.min(1, (performance.now() - this._transition.start) / 360);
       const ease = 1 - (1 - t) ** 3;
       this.camera.position.lerpVectors(this._transition.fromPosition, this._transition.toPosition, ease);
@@ -623,7 +709,7 @@ export class PartViewport {
       this.dirty = true;
       if (t === 1) this._transition = null;
     }
-    const changed = this.controls.update(delta);
+    const changed = this.dimensionEditing ? false : this.controls.update(delta);
     if (this.dirty || changed || this.controls.autoRotate) {
       this.renderer.render(this.scene, this.camera);
       this._updateLabels();

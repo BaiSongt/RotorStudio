@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_MODEL, PRESETS, createSegment, createKeyway, createHole,
   cloneModel, getSegmentLayout, getModelBounds, validateModel, normalizeModel,
-  segmentRadiusAt, minSegmentRadius, getChamferRun,
+  segmentRadiusAt, minSegmentRadius, getChamferRun, getKeywayAxialLength,
 } from '../src/schema.js';
 
 function simpleModel(segment = {}) {
@@ -168,6 +168,107 @@ test('键槽拒绝穿心与不能形成完整槽宽的浅槽', () => {
   expectError(model, /完整槽宽/);
   model.keyways[0] = createKeyway('s1', { width: 8, depth: 3 });
   assert.deepEqual(validateModel(model).errors, []);
+});
+
+test('五种键槽共用轴向长度接口，半圆键槽长度只由刀径和深度派生', () => {
+  for (const ends of ['round', 'square', 'round-left', 'round-right']) {
+    const key = createKeyway('s1', { ends, length: 25 });
+    assert.equal(getKeywayAxialLength(key), 25);
+    const model = simpleModel(); model.keyways = [key];
+    assert.deepEqual(validateModel(model).errors, []);
+  }
+  const key = createKeyway('s1', { ends: 'woodruff', cutterDiameter: 24, depth: 3, length: 1000 });
+  assert.equal(getKeywayAxialLength(key), 2 * Math.sqrt(63));
+  key.length = -7;
+  assert.equal(getKeywayAxialLength(key), 2 * Math.sqrt(63));
+  const model = simpleModel(); model.keyways = [key];
+  assert.deepEqual(validateModel(model).errors, []);
+  key.ends = 'square';
+  expectError(model, /长度必须在/);
+  assert.ok(Number.isNaN(getKeywayAxialLength({ ends: 'woodruff', cutterDiameter: 10, depth: 11 })));
+  assert.ok(Number.isNaN(getKeywayAxialLength({ ends: 'woodruff', cutterDiameter: Infinity, depth: 3 })));
+});
+
+test('旧版键槽工程只补缺失刀径，保留类型、尺寸和附加字段且不修改输入', () => {
+  for (const ends of ['round', 'square']) {
+    const model = simpleModel();
+    model.keyways = [createKeyway('s1', { ends, length: 26, notes: '旧版参数' })];
+    delete model.keyways[0].cutterDiameter;
+    assert.deepEqual(validateModel(model).errors, []);
+    const imported = normalizeModel(model);
+    assert.equal(model.keyways[0].cutterDiameter, undefined);
+    assert.equal(imported.keyways[0].cutterDiameter, 24);
+    assert.equal(imported.keyways[0].ends, ends);
+    assert.equal(imported.keyways[0].length, 26);
+    assert.equal(imported.keyways[0].notes, '旧版参数');
+    assert.equal(imported.schemaVersion, 1);
+  }
+  const model = simpleModel();
+  model.keyways = [createKeyway('s1', { cutterDiameter: -3 })];
+  assert.equal(normalizeModel(model).keyways[0].cutterDiameter, -3);
+  model.keyways[0].ends = 'woodruff';
+  expectError(model, /圆盘刀直径必须在/);
+  for (const value of [null, '24', NaN, Infinity, undefined]) {
+    model.keyways[0].ends = 'round';
+    model.keyways[0].cutterDiameter = value;
+    assert.throws(() => normalizeModel(model), /圆盘刀直径草稿必须是有限数字/);
+  }
+});
+
+test('单圆头槽允许半槽宽边界，并拒绝更短的自相交轮廓', () => {
+  for (const ends of ['round-left', 'round-right']) {
+    const model = simpleModel();
+    model.keyways = [createKeyway('s1', { ends, length: 4, width: 8 })];
+    assert.deepEqual(validateModel(model).errors, []);
+    model.keyways[0].length = 3.99;
+    expectError(model, /单圆头槽的总长度不能小于槽宽的一半/);
+  }
+});
+
+test('半圆键槽只支持圆柱，深度同时受圆盘半径、轴半径和完整槽宽约束', () => {
+  for (const type of ['cone', 'gear']) {
+    const model = simpleModel({ type });
+    model.keyways = [createKeyway('s1', { ends: 'woodruff' })];
+    expectError(model, /半圆键槽仅支持圆柱段/);
+  }
+  const model = simpleModel();
+  model.keyways = [createKeyway('s1', { ends: 'woodruff', cutterDiameter: 24, depth: 12 })];
+  expectError(model, /深度必须小于圆盘刀半径/);
+  model.keyways[0].depth = 11.99;
+  assert.deepEqual(validateModel(model).errors, []);
+  model.keyways[0] = createKeyway('s1', { ends: 'woodruff', cutterDiameter: 60, depth: 20 });
+  expectError(model, /穿越轴心/);
+  model.keyways[0] = createKeyway('s1', { ends: 'woodruff', cutterDiameter: 24, width: 20, depth: 0.2 });
+  expectError(model, /完整槽宽/);
+  model.keyways[0].depth = 3;
+  assert.deepEqual(validateModel(model).errors, []);
+});
+
+test('半圆键槽按派生长度检查阶梯边界与倒角，不使用隐藏长度草稿', () => {
+  const model = simpleModel({ chamferRight: 2 });
+  model.keyways = [createKeyway('s1', { ends: 'woodruff', position: 90, length: 1, cutterDiameter: 24, depth: 3 })];
+  expectError(model, /超出所属阶梯长度/);
+  model.keyways[0].cutterDiameter = 8;
+  model.keyways[0].length = 5000;
+  assert.deepEqual(validateModel(model).errors, []);
+  model.keyways[0].position = 92;
+  const result = validateModel(model);
+  assert.deepEqual(result.errors, []);
+  assert.ok(result.warnings.some((message) => /与端部倒角相交/.test(message)));
+});
+
+test('半圆键槽与端面孔的相交通知使用真实派生轴向范围', () => {
+  const model = simpleModel();
+  model.keyways = [createKeyway('s1', { ends: 'woodruff', position: 10, length: 1, cutterDiameter: 40, depth: 8 })];
+  model.holes = [createHole({ face: 'right', depth: 70, diameter: 26 })];
+  let result = validateModel(model);
+  assert.deepEqual(result.errors, []);
+  assert.ok(result.warnings.some((message) => /可能相通/.test(message)));
+  model.keyways[0] = createKeyway('s1', { ends: 'woodruff', position: 10, length: 80, cutterDiameter: 8, depth: 3 });
+  model.holes[0].diameter = 36;
+  result = validateModel(model);
+  assert.deepEqual(result.errors, []);
+  assert.ok(!result.warnings.some((message) => /可能相通/.test(message)));
 });
 
 test('孔阵列拒绝孔间重叠与超出端面', () => {

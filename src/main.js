@@ -1,7 +1,8 @@
 import './style.css';
 import { createIcons, Plus, ChevronDown, Download, FolderOpen, Save, Undo2, Redo2, Copy, Trash2, ArrowUp, ArrowDown, X, Check, Settings2, Layers, Cog, Box, CircleDot, Scissors, Ruler, MoveHorizontal, Focus, Rotate3d, Sun, Moon, HelpCircle, PanelLeftClose, PanelLeftOpen, FileJson, TriangleAlert, LoaderCircle, Info, RotateCcw } from 'lucide';
 import { PartViewport } from './viewport.js';
-import { DEFAULT_MODEL, PRESETS, MATERIALS, LIMITS, createSegment, createKeyway, createHole, cloneModel, normalizeModel, validateModel, getSegmentLayout, getModelBounds, uid, minSegmentRadius } from './schema.js';
+import { DEFAULT_MODEL, PRESETS, MATERIALS, LIMITS, createSegment, createKeyway, createHole, cloneModel, normalizeModel, validateModel, getSegmentLayout, getModelBounds, getKeywayAxialLength, uid, minSegmentRadius } from './schema.js';
+import { getDimensionSpec, applyDimensionEdit } from './dimensions.js';
 
 const icons = { Plus, ChevronDown, Download, FolderOpen, Save, Undo2, Redo2, Copy, Trash2, ArrowUp, ArrowDown, X, Check, Settings2, Layers, Cog, Box, CircleDot, Scissors, Ruler, MoveHorizontal, Focus, Rotate3d, Sun, Moon, HelpCircle, PanelLeftClose, PanelLeftOpen, FileJson, TriangleAlert, LoaderCircle, Info, RotateCcw };
 const $ = (selector) => document.querySelector(selector);
@@ -11,6 +12,7 @@ const decorate = () => createIcons({ icons, attrs: { 'stroke-width': 1.6 } });
 const fmt = (value, places = 2) => Number.isFinite(value) ? Number(value.toFixed(places)).toLocaleString('zh-CN', { maximumFractionDigits: places }) : '—';
 const typeNames = { cylinder: '圆柱段', cone: '圆锥段', gear: '直齿轮' };
 const typeIcons = { cylinder: 'box', cone: 'layers', gear: 'cog' };
+const keywayTypes = { round: '两端圆平键槽', square: '两端方平键槽', 'round-left': '左圆右方平键槽', 'round-right': '左方右圆平键槽', woodruff: '半圆键槽 · Woodruff' };
 const STORAGE = 'rotor-studio-v1';
 let model = cloneModel(DEFAULT_MODEL);
 let restored = false;
@@ -27,6 +29,7 @@ let needsFit = true, theme = 'light', wireMode = 'edges', dimensions = true, sec
 const exportTasks = new Map();
 let toastTimer;
 let activeDownloadUrl = null;
+let dimensionEditState = null;
 
 $('#app').innerHTML = `
   <header class="app-header">
@@ -47,7 +50,7 @@ $('#app').innerHTML = `
       <div class="sidebar-heading"><span>设计参数</span><span class="unit-label">mm · deg</span><button class="icon-button small" id="collapse-sidebar" title="收起参数面板" aria-label="收起参数面板">${ico('panel-left-close')}</button></div>
       <nav class="tabs" aria-label="特征类型"><button data-tab="segments" class="active">${ico('layers')}阶梯</button><button data-tab="keyways">${ico('scissors')}键槽</button><button data-tab="holes">${ico('circle-dot')}端面孔</button><button data-tab="project">${ico('settings-2')}设置</button></nav>
       <div id="panel-content" class="panel-content"></div>
-      <div class="sidebar-bottom"><span class="dot teal"></span><span>参数驱动 · 实体建模</span><span>v1.0</span></div>
+      <div class="sidebar-bottom"><span class="dot teal"></span><span>参数驱动 · 实体建模</span><span>v1.1</span></div>
     </aside>
     <div id="resize-handle" class="resize-handle" role="separator" aria-label="调整参数面板宽度" aria-orientation="vertical" tabindex="0"></div>
     <main class="workspace">
@@ -61,9 +64,9 @@ $('#app').innerHTML = `
         <div class="viewport-note" id="section-note" hidden>剖切仅用于观察 · 导出保持完整实体</div>
         <div class="validation-banner" id="validation-banner" hidden></div>
         <div id="initial-loader" class="initial-loader"><span class="loading-orbit"></span><strong>正在生成你的零件</strong><span>载入几何内核，构建参数化实体</span><small>首次启动需要下载约 11 MB 内核</small></div>
-        <div class="viewport-bottom"><div class="selection-info" id="selection-info"></div><div class="view-switcher" aria-label="标准视图"><button data-view="iso" class="active">等轴</button><button data-view="front">正视</button><button data-view="top">俯视</button><button data-view="left">左端</button><button data-view="right">右端</button></div><span class="mouse-hint">拖动旋转 · 右键平移 · 滚轮缩放</span></div>
+        <div class="viewport-bottom"><div class="selection-info" id="selection-info"></div><div class="view-switcher" aria-label="标准视图"><button data-view="iso" class="active">等轴</button><button data-view="front">正视</button><button data-view="top">俯视</button><button data-view="left">左端</button><button data-view="right">右端</button></div><span class="mouse-hint">点击尺寸输入 · 拖动旋转 · 滚轮缩放</span></div>
       </div>
-      <section class="profile-panel" id="profile-panel"><div class="profile-heading"><span>${ico('move-horizontal')}<strong>轴向轮廓</strong><span class="muted">点击选择阶梯 · 拖动分界线调整位置</span></span><div class="profile-stats" id="profile-stats"></div><button class="icon-button small" id="profile-toggle" title="收起轮廓" aria-label="收起轮廓">${ico('chevron-down')}</button></div><div id="profile-chart"></div></section>
+      <section class="profile-panel" id="profile-panel"><div class="profile-heading"><span>${ico('move-horizontal')}<strong>轴向轮廓</strong><span class="muted">点击尺寸输入 · 拖动分界线调整位置</span></span><div class="profile-stats" id="profile-stats"></div><button class="icon-button small" id="profile-toggle" title="收起轮廓" aria-label="收起轮廓">${ico('chevron-down')}</button></div><div id="profile-chart"></div></section>
       <footer class="statusbar"><div id="model-stats">${ico('loader-circle', 'spin')}<span>准备实体模型…</span></div><div><span id="quality-label">标准显示精度</span><span class="status-divider"></span><span>Three.js + OpenCascade</span></div></footer>
     </main>
   </div>
@@ -71,13 +74,20 @@ $('#app').innerHTML = `
   <div class="popover" id="presets-menu" hidden><div class="menu-heading">从示例开始</div>${PRESETS.map((p) => `<button data-preset="${escape(p.id)}"><span class="preset-icon">${ico(p.id.includes('gear') ? 'cog' : p.id.includes('flange') ? 'circle-dot' : 'layers')}</span><span><strong>${escape(p.name)}</strong><small>${escape(p.description)}</small></span></button>`).join('')}<div class="menu-foot">当前工程会自动保留在撤销历史中</div></div>
   <div class="popover export-menu" id="export-menu" hidden><div class="menu-heading">导出当前实体 <span>含全部特征</span></div><button data-export="step"><span class="format-mark">STP</span><span><strong>STEP 实体模型</strong><small>用于 CAD / CAM · B-Rep · mm</small></span><span class="recommended">推荐</span></button><button data-export="stl"><span class="format-mark">STL</span><span><strong>STL 三角网格</strong><small>二进制 · 3D 打印 / 网格处理 · mm</small></span></button><button data-export="glb"><span class="format-mark">GLB</span><span><strong>GLB 三维模型</strong><small>含材质 · 网页 / 展示 · m</small></span></button><button data-export="obj"><span class="format-mark">OBJ</span><span><strong>OBJ 三角网格</strong><small>通用网格 · mm</small></span></button><div class="menu-foot">继续参数化编辑请使用「保存工程」</div></div>
   <div class="toast" id="toast" role="status" hidden></div>
+  <form id="dimension-editor" class="dimension-editor" role="dialog" aria-labelledby="dimension-editor-title" aria-describedby="dimension-editor-hint" novalidate hidden>
+    <div class="dimension-editor-heading"><span>${ico('ruler')}<strong id="dimension-editor-title">编辑尺寸</strong></span><button type="button" class="icon-button small" id="dimension-editor-close" aria-label="取消尺寸编辑">${ico('x')}</button></div>
+    <label class="input-wrap" for="dimension-editor-input"><input id="dimension-editor-input" type="number" inputmode="decimal" aria-describedby="dimension-editor-hint dimension-editor-error" autocomplete="off"/><em id="dimension-editor-unit">mm</em></label>
+    <p id="dimension-editor-hint" class="dimension-editor-hint"></p>
+    <p id="dimension-editor-error" class="dimension-editor-error" role="alert" hidden></p>
+    <div class="dimension-editor-actions"><span><kbd>Enter</kbd> 确认 · <kbd>Esc</kbd> 取消</span><button type="submit" class="button primary">应用 ${ico('check')}</button></div>
+  </form>
   <div class="download-ready" id="download-ready" hidden><span>${ico('check')}文件已生成</span><a id="download-ready-link">下载文件</a><button class="icon-button small" id="dismiss-download" title="关闭下载提示" aria-label="关闭下载提示">${ico('x')}</button></div>
-  <dialog id="help-dialog" class="help-dialog"><div class="dialog-heading"><div><span class="eyebrow">ROTOR STUDIO</span><h2>从尺寸到实体，六步完成设计</h2></div><button class="icon-button" data-close-dialog aria-label="关闭说明">${ico('x')}</button></div><div class="help-grid"><section><b>01 / 定义阶梯</b><p>添加、复制或调整阶梯顺序。长度控制各段尺寸，起点控制轴向位置。圆柱段可切换为圆锥或直齿轮。</p></section><section><b>02 / 调整位置</b><p>第一段从 X=0 开始。编辑起点会调整前一段长度，并移动当前及后续阶梯；拖动下方分界线则保留总长度。</p></section><section><b>03 / 设置齿形</b><p>选择直齿轮，输入模数、齿数与压力角。节圆、齿顶和齿根直径按公式联动；齿廓按渐开线采样构建。</p></section><section><b>04 / 添加键槽</b><p>为指定阶梯添加圆头或方头键槽。调整位置、长宽深与周向角度；0° 位于 +Y 上方，可添加多个键槽。</p></section><section><b>05 / 设置端面孔</b><p>支持左右端面中心孔、偏置孔、圆周孔阵列、盲孔、通孔与沉孔。孔径、深度、分布圆和相位均可调。</p></section><section><b>06 / 保存与导出</b><p>STEP 保留实体；STL / OBJ 为毫米网格；GLB 转为米。工程 JSON 保留全部可编辑参数，可随时重新打开。</p></section></div><div class="help-note">${ico('info')}<p>首版支持无变位渐开线直齿的采样近似、平底圆孔和45°直倒角。齿根未模拟滚刀包络；不包含斜齿、螺纹、圆角、PMI与公差。用于制造前，请在 CAD / CAM 中核验尺寸及工艺要求。</p></div><div class="dialog-footer"><span>快捷键：<kbd>Ctrl Z</kbd> 撤销 <kbd>Ctrl S</kbd> 保存 <kbd>F</kbd> 适应窗口</span><button class="button primary" data-close-dialog>开始设计 ${ico('check')}</button></div></dialog>
+  <dialog id="help-dialog" class="help-dialog"><div class="dialog-heading"><div><span class="eyebrow">ROTOR STUDIO</span><h2>从尺寸到实体，六步完成设计</h2></div><button class="icon-button" data-close-dialog aria-label="关闭说明">${ico('x')}</button></div><div class="help-grid"><section><b>01 / 定义阶梯</b><p>添加、复制或调整阶梯顺序。长度控制各段尺寸，起点控制轴向位置。圆柱段可切换为圆锥或直齿轮。</p></section><section><b>02 / 调整位置</b><p>点击三维或底部尺寸直接输入，Enter 应用、Esc 取消。起点联动前一段长度；总长联动末段长度。拖动底部分界线保持总长，所有修改均可撤销。</p></section><section><b>03 / 设置齿形</b><p>选择直齿轮，输入模数、齿数与压力角。节圆、齿顶和齿根直径按公式联动；齿廓按渐开线采样构建。</p></section><section><b>04 / 添加键槽</b><p>支持两端圆、两端方、左圆右方、左方右圆平键槽及半圆键槽。半圆键槽仅用于圆柱段，由圆盘刀直径与槽深联动槽口长度；0° 位于 +Y 上方。</p></section><section><b>05 / 设置端面孔</b><p>支持左右端面中心孔、偏置孔、圆周孔阵列、盲孔、通孔与沉孔。孔径、深度、分布圆和相位均可调。</p></section><section><b>06 / 保存与导出</b><p>STEP 保留实体；STL / OBJ 为毫米网格；GLB 转为米。工程 JSON 保留全部可编辑参数，可随时重新打开。</p></section></div><div class="help-note">${ico('info')}<p>支持无变位渐开线直齿的采样近似、平底圆孔和45°直倒角。齿根未模拟滚刀包络；不包含斜齿、螺纹、圆角、PMI与公差。用于制造前，请在 CAD / CAM 中核验尺寸及工艺要求。</p></div><div class="dialog-footer"><span>快捷键：<kbd>Ctrl Z</kbd> 撤销 <kbd>Ctrl S</kbd> 保存 <kbd>F</kbd> 适应窗口</span><button class="button primary" data-close-dialog>开始设计 ${ico('check')}</button></div></dialog>
 `;
 
 let viewport;
 let viewportError = '';
-try { viewport = new PartViewport($('#viewport'), { onSelect: (id) => selectSegment(id, true), onAutoRotateChange: (enabled) => { spin = enabled; $('#spin-button').classList.toggle('active', enabled); } }); }
+try { viewport = new PartViewport($('#viewport'), { onSelect: (id) => selectSegment(id, true), onDimensionEdit: openDimensionEditor, onAutoRotateChange: (enabled) => { spin = enabled; $('#spin-button').classList.toggle('active', enabled); } }); }
 catch (error) {
   viewportError = error.message;
   $('#initial-loader').innerHTML = `<strong>当前浏览器未启用 WebGL</strong><span>启用浏览器硬件加速后，可查看交互式三维模型。</span><small>参数编辑、轴向轮廓及 STEP / STL 导出仍可使用。</small>`;
@@ -95,6 +105,94 @@ function toggleField(label, scope, key, value, caption = '') {
   return `<label class="toggle-row"><span><strong>${label}</strong>${caption ? `<small>${caption}</small>` : ''}</span><input type="checkbox" data-scope="${scope}" data-field="${key}"${value ? ' checked' : ''}/><span class="toggle-track"></span></label>`;
 }
 function sectionHeading(title, sub = '') { return `<div class="property-heading"><strong>${title}</strong>${sub ? `<span>${sub}</span>` : ''}</div>`; }
+
+function dimensionAttributes(target) {
+  return `data-dimension-kind="${escape(target.kind)}"${target.id ? ` data-segment-id="${escape(target.id)}"` : ''}`;
+}
+
+// 两个视图共用一个编辑器；只有完整通过约束校验的尺寸才进入撤销历史。
+function openDimensionEditor(target, anchor) {
+  if (draggingProfile) return;
+  let spec;
+  try { spec = getDimensionSpec(model, target); }
+  catch (error) { toast(error.message, true); return; }
+  const rect = anchor.getBoundingClientRect();
+  const surface = anchor.closest('#viewport') ? '3d' : 'profile';
+  closeDimensionEditor(false);
+  closeMenus();
+  if (spec.segmentId) {
+    selectedSegment = spec.segmentId; activeTab = 'segments'; renderPanel();
+    // 保留尺寸按钮与滚动位置，避免重建轮廓触发排队的 scroll 事件关闭输入框。
+    document.querySelectorAll('[data-profile-segment]').forEach((el) => el.classList.toggle('selected', el.dataset.profileSegment === selectedSegment));
+    document.querySelectorAll('.profile-value[data-segment-id]').forEach((el) => el.classList.toggle('is-selected', el.dataset.segmentId === selectedSegment));
+  }
+  dimensionEditState = { target: { ...target }, revision, rect, surface, anchor, value: spec.value, scrollLeft: $('#profile-chart').scrollLeft };
+  viewport?.setDimensionEditing(true);
+  const editor = $('#dimension-editor'), input = $('#dimension-editor-input');
+  $('#dimension-editor-title').textContent = spec.title;
+  $('#dimension-editor-unit').textContent = spec.unit;
+  $('#dimension-editor-hint').textContent = spec.hint;
+  $('#dimension-editor-error').hidden = true;
+  input.setAttribute('aria-label', spec.title);
+  input.removeAttribute('aria-invalid');
+  input.value = String(spec.value); input.step = String(spec.step);
+  for (const attr of ['min', 'max']) if (Number.isFinite(spec[attr])) input.setAttribute(attr, spec[attr]); else input.removeAttribute(attr);
+  editor.hidden = false;
+  positionDimensionEditor();
+  input.focus({ preventScroll: true }); input.select();
+}
+
+function positionDimensionEditor() {
+  if (!dimensionEditState) return;
+  const editor = $('#dimension-editor'), rect = dimensionEditState.rect, gap = 9;
+  editor.style.left = `${Math.max(8, Math.min(innerWidth - editor.offsetWidth - 8, rect.left + rect.width / 2 - editor.offsetWidth / 2))}px`;
+  const below = rect.bottom + gap;
+  editor.style.top = `${Math.max(8, Math.min(innerHeight - editor.offsetHeight - 8, below + editor.offsetHeight <= innerHeight - 8 ? below : rect.top - editor.offsetHeight - gap))}px`;
+}
+
+function closeDimensionEditor(restoreFocus = true) {
+  const previous = dimensionEditState;
+  dimensionEditState = null;
+  $('#dimension-editor').hidden = true;
+  if (!previous) return;
+  viewport?.setDimensionEditing(false);
+  if (restoreFocus) focusDimensionAnchor(previous);
+}
+
+function focusDimensionAnchor(state) {
+  const region = state.surface === '3d' ? $('#viewport') : $('#profile-panel');
+  const anchor = state.anchor.isConnected ? state.anchor : [...region.querySelectorAll('[data-dimension-kind]')].find((el) => el.dataset.dimensionKind === state.target.kind && (el.dataset.segmentId || '') === (state.target.id || ''));
+  anchor?.focus({ preventScroll: true });
+}
+
+function applyDimensionEditor() {
+  if (!dimensionEditState) return false;
+  const state = dimensionEditState, input = $('#dimension-editor-input');
+  try {
+    if (state.revision !== revision) throw new Error('参数已发生变化，请取消后重新打开这个尺寸。');
+    const next = applyDimensionEdit(model, state.target, input.value);
+    closeDimensionEditor(false);
+    if (Number(input.value) !== state.value) commit(() => { model = next; }, { message: '尺寸已更新，正在重建实体' });
+    focusDimensionAnchor(state);
+    return true;
+  } catch (error) {
+    const message = $('#dimension-editor-error'); message.textContent = error.message; message.hidden = false;
+    input.setAttribute('aria-invalid', 'true'); positionDimensionEditor(); input.focus({ preventScroll: true });
+    return false;
+  }
+}
+
+function keywayPreview(key) {
+  const paths = {
+    round: 'M36 16H104A14 14 0 0 1 104 44H36A14 14 0 0 1 36 16Z',
+    square: 'M22 16H118V44H22Z',
+    'round-left': 'M36 16H118V44H36A14 14 0 0 1 36 16Z',
+    'round-right': 'M22 16H104A14 14 0 0 1 104 44H22Z',
+    woodruff: 'M26 17H114A50 50 0 0 1 26 17Z',
+  };
+  return `<div class="keyway-preview"><svg viewBox="0 0 140 64" role="img" aria-label="${escape(keywayTypes[key.ends] || '')}形状示意"><path class="keyway-preview-axis" d="M10 30H130"/><path class="keyway-preview-shape" d="${paths[key.ends] || paths.round}"/></svg><span><strong>${escape(keywayTypes[key.ends] || '')}</strong><small>${key.ends === 'woodruff' ? '轴向剖面 · 圆盘刀形成圆弧槽底' : '上视轮廓 · 总长包含圆弧端部'}</small></span></div>`;
+}
+
 function renderPanel() {
   document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === activeTab));
   const panel = $('#panel-content');
@@ -121,11 +219,14 @@ function renderPanel() {
     html += `<button class="button full outline" data-action="keyway-on-segment">${ico('plus')}在此阶梯添加键槽</button></div>`;
   } else if (activeTab === 'keyways') {
     html = `<div class="list-heading"><span>键槽特征 <b>${String(model.keyways.length).padStart(2, '0')}</b></span><button class="mini-button" data-action="add-keyway">${ico('plus')}添加键槽</button></div>`;
-    html += model.keyways.length ? `<div class="feature-list">${model.keyways.map((k, i) => `<button class="feature-row ${k.id === selectedKeyway ? 'selected' : ''}" data-keyway="${escape(k.id)}"><span class="feature-icon">${ico('scissors')}</span><span><strong>键槽 ${String(i + 1).padStart(2, '0')}${k.enabled ? '' : ' · 已停用'}</strong><small>${escape(model.segments.find((s) => s.id === k.segmentId)?.name || '')} · ${fmt(k.width)} × ${fmt(k.depth)} × ${fmt(k.length)}</small></span></button>`).join('')}</div>` : emptyPanel('scissors', '给轴面添加键槽', '选中一个阶梯，定义键槽的位置、宽度与深度。');
+    html += model.keyways.length ? `<div class="feature-list">${model.keyways.map((k, i) => `<button class="feature-row ${k.id === selectedKeyway ? 'selected' : ''}" data-keyway="${escape(k.id)}"><span class="feature-icon">${ico('scissors')}</span><span><strong>键槽 ${String(i + 1).padStart(2, '0')} · ${escape(keywayTypes[k.ends] || k.ends)}${k.enabled ? '' : ' · 已停用'}</strong><small>${escape(model.segments.find((s) => s.id === k.segmentId)?.name || '')} · ${fmt(k.width)} × ${fmt(k.depth)} × ${fmt(getKeywayAxialLength(k))}</small></span></button>`).join('')}</div>` : emptyPanel('scissors', '给轴面添加键槽', '选中一个阶梯，定义键槽的位置、宽度与深度。');
     const k = model.keyways.find((k) => k.id === selectedKeyway);
     if (k) {
       html += `<div class="properties"><div class="selected-heading"><strong>键槽参数</strong><div class="mini-actions"><button class="icon-button small" data-action="duplicate-keyway" title="复制并旋转180°" aria-label="复制并旋转180°">${ico('copy')}</button><button class="icon-button small danger" data-action="delete-keyway" title="删除键槽" aria-label="删除键槽">${ico('trash-2')}</button></div></div>`;
-      html += toggleField('启用特征', 'keyway', 'enabled', k.enabled) + '<div class="field-grid">' + selectField('所属阶梯', 'keyway', 'segmentId', k.segmentId, model.segments.map((s, i) => [s.id, `${i + 1} · ${s.name}`]), true) + selectField('端部形式', 'keyway', 'ends', k.ends, [['round', '圆头键槽'], ['square', '方头键槽']], true) + numberField('段内起点', 'keyway', 'position', k.position, { min: 0 }) + numberField('总长 L', 'keyway', 'length', k.length, { min: .1 }) + numberField('槽宽 W', 'keyway', 'width', k.width, { min: .1 }) + numberField('槽深 t', 'keyway', 'depth', k.depth, { min: .05 }) + numberField('周向角度 θ', 'keyway', 'angle', k.angle, { unit: '°', step: 1, wide: true }) + '</div><p class="panel-note">0° 位于 +Y 上方，正角度绕 +X 轴旋转。圆头槽的长度包含两端圆弧。支持多组独立键槽。</p></div>';
+      const woodruff = k.ends === 'woodruff';
+      html += toggleField('启用特征', 'keyway', 'enabled', k.enabled) + '<div class="field-grid">' + selectField('所属阶梯', 'keyway', 'segmentId', k.segmentId, model.segments.map((s, i) => [s.id, `${i + 1} · ${s.name}`]), true) + selectField('键槽类型', 'keyway', 'ends', k.ends, Object.entries(keywayTypes), true) + '</div>' + keywayPreview(k);
+      html += '<div class="field-grid">' + (woodruff ? numberField('圆盘刀直径 Dc', 'keyway', 'cutterDiameter', k.cutterDiameter ?? 24, { min: LIMITS.minDiameter, wide: true }) : '') + numberField('段内起点', 'keyway', 'position', k.position, { min: 0 }) + numberField(woodruff ? '槽口长度 L' : '总长 L', 'keyway', 'length', woodruff ? Number(getKeywayAxialLength(k).toFixed(4)) : k.length, { min: .1, disabled: woodruff, hint: woodruff ? '自动计算' : '' }) + numberField('槽宽 W', 'keyway', 'width', k.width, { min: .1 }) + numberField('槽深 t', 'keyway', 'depth', k.depth, { min: .05 }) + numberField('周向角度 θ', 'keyway', 'angle', k.angle, { unit: '°', step: 1, wide: true }) + '</div>';
+      html += `<p class="panel-note">${woodruff ? '半圆键槽仅用于圆柱段。圆盘刀直径与槽深决定槽口长度；起点为槽口最左端，槽底保持真实圆弧。' : '总长包含圆弧端部；左、右按 X 轴方向区分。端点设在阶梯边界，可形成端部开口。'}<br/>0° 位于 +Y 上方，正角度绕 +X 轴旋转。支持多组独立键槽。</p></div>`;
     }
   } else if (activeTab === 'holes') {
     html = `<div class="list-heading"><span>端面孔组 <b>${String(model.holes.length).padStart(2, '0')}</b></span><button class="mini-button" data-action="add-hole">${ico('plus')}添加孔组</button></div>`;
@@ -138,7 +239,7 @@ function renderPanel() {
       html += sectionHeading('端面沉孔', '均为平底') + '<div class="field-grid">' + numberField('沉孔直径', 'hole', 'counterboreDiameter', h.counterboreDiameter, { min: 0 }) + numberField('沉孔深度', 'hole', 'counterboreDepth', h.counterboreDepth, { min: 0 }) + '</div><p class="panel-note">沉孔直径与深度同时设为 0 即关闭。孔组会校验整个钻入区间，避免穿出细轴侧壁。暂不包含螺纹和钻尖。</p></div>';
     }
   } else {
-    html = `<div class="properties project-settings">${sectionHeading('工程设置')}<div class="field-grid">${selectField('材料 / 质量估算', 'model', 'material', model.material, Object.entries(MATERIALS).map(([id, v]) => [id, `${v.name} · ${v.density} g/cm³`]), true)}${selectField('网格显示与 STL 精度', 'model', 'quality', model.quality, [['standard', '标准 · 日常编辑'], ['fine', '精细 · 导出与展示']], true)}</div><p class="panel-note">材料用于质量估算。STEP 导出使用同一实体；显示精度只改变三角网格的细密程度。</p>${sectionHeading('坐标与单位')}<div class="definition-list"><span>轴向</span><strong>X，左 → 右</strong><span>径向</span><strong>Y / Z 平面</strong><span>长度 / 角度</span><strong>mm / °</strong><span>工程格式</span><strong>JSON v1</strong><span>数据位置</span><strong>当前浏览器本机</strong></div>${sectionHeading('支持范围')}<div class="capabilities"><span>${ico('check')}圆柱 / 圆锥 / 直齿</span><span>${ico('check')}多阶梯与45°倒角</span><span>${ico('check')}圆头 / 方头键槽</span><span>${ico('check')}孔阵列 / 通孔 / 沉孔</span></div><p class="panel-note">齿轮使用采样渐开线，齿根为几何过渡。未包含变位、斜齿、螺纹、圆角、PMI 和公差。</p><button class="button full outline" data-action="help">${ico('help-circle')}查看使用说明</button><button class="button full ghost" data-action="reset">${ico('rotate-ccw')}恢复默认齿轮轴</button></div>`;
+    html = `<div class="properties project-settings">${sectionHeading('工程设置')}<div class="field-grid">${selectField('材料 / 质量估算', 'model', 'material', model.material, Object.entries(MATERIALS).map(([id, v]) => [id, `${v.name} · ${v.density} g/cm³`]), true)}${selectField('网格显示与 STL 精度', 'model', 'quality', model.quality, [['standard', '标准 · 日常编辑'], ['fine', '精细 · 导出与展示']], true)}</div><p class="panel-note">材料用于质量估算。STEP 导出使用同一实体；显示精度只改变三角网格的细密程度。</p>${sectionHeading('坐标与单位')}<div class="definition-list"><span>轴向</span><strong>X，左 → 右</strong><span>径向</span><strong>Y / Z 平面</strong><span>长度 / 角度</span><strong>mm / °</strong><span>工程格式</span><strong>JSON v1</strong><span>数据位置</span><strong>当前浏览器本机</strong></div>${sectionHeading('支持范围')}<div class="capabilities"><span>${ico('check')}圆柱 / 圆锥 / 直齿</span><span>${ico('check')}多阶梯与45°倒角</span><span>${ico('check')}平键槽 / 单圆头 / 半圆键槽</span><span>${ico('check')}孔阵列 / 通孔 / 沉孔</span></div><p class="panel-note">齿轮使用采样渐开线，齿根为几何过渡。未包含变位、斜齿、螺纹、圆角、PMI 和公差。</p><button class="button full outline" data-action="help">${ico('help-circle')}查看使用说明</button><button class="button full ghost" data-action="reset">${ico('rotate-ccw')}恢复默认齿轮轴</button></div>`;
   }
   panel.innerHTML = html;
   panel.scrollTop = savedScroll;
@@ -156,33 +257,63 @@ function renderSelection() {
 
 function renderProfile() {
   const { length, maxDiameter } = getModelBounds(model);
-  $('#profile-stats').innerHTML = `<span>总长 <b>${fmt(length)}</b> mm</span><span>最大 Ø <b>${fmt(maxDiameter)}</b> mm</span>`;
   if (!Number.isFinite(length) || length <= 0 || !Number.isFinite(maxDiameter) || maxDiameter <= 0) return;
-  const layout = getSegmentLayout(model), w = 1000, h = 120, left = 48, right = 48, axis = 57, scale = (w - left - right) / length;
+  const layout = getSegmentLayout(model), w = 1000, h = 136, left = 48, right = 48, axis = 60, scale = (w - left - right) / length;
+  const diameterTarget = (s, rightEnd = false) => ({ kind: s.type === 'gear' ? 'gear-tip-diameter' : rightEnd ? 'segment-end-diameter' : 'segment-diameter', id: s.id });
+  const largest = layout.find((s) => s.maxDiameter === maxDiameter);
+  const largestTarget = diameterTarget(largest, largest.type === 'cone' && largest.endDiameter > largest.diameter);
+  $('#profile-stats').innerHTML = `<button type="button" ${dimensionAttributes({ kind: 'total-length' })} title="点击编辑总长，通过末段长度调整">总长 <b>${fmt(length)}</b> mm</button><button type="button" ${dimensionAttributes(largestTarget)} title="编辑${escape(largest.name)}的${largest.type === 'gear' ? '齿顶' : ''}直径">最大 Ø <b>${fmt(maxDiameter)}</b> mm</button>`;
   const radial = Math.min(37 / (maxDiameter / 2), 1.8);
   const x = (v) => left + v * scale, y = (v) => axis - v * radial;
-  let paths = '', annotations = '', features = '';
+  let paths = '', annotations = '', features = '', labels = '';
+  const dimensionButton = (target, text, xx, yy, title, cls = '') => `<button type="button" class="profile-value ${cls}" ${dimensionAttributes(target)} style="left:${xx / w * 100}%;top:${yy / h * 100}%" title="${escape(title)} · 点击输入" aria-label="编辑${escape(title)}">${escape(text)}</button>`;
   layout.forEach((s, i) => {
     const r1 = (s.type === 'gear' ? s.maxDiameter : s.diameter) / 2, r2 = s.type === 'cone' ? s.endDiameter / 2 : r1;
     const points = `${x(s.start)},${y(r1)} ${x(s.end)},${y(r2)} ${x(s.end)},${y(-r2)} ${x(s.start)},${y(-r1)}`;
-    paths += `<g class="profile-segment ${s.id === selectedSegment ? 'selected' : ''} ${s.type}" data-profile-segment="${escape(s.id)}" role="button" tabindex="0" aria-label="选择${escape(s.name)}"><polygon points="${points}"/>${s.type === 'gear' ? `<path class="gear-root-line" d="M${x(s.start)} ${y(s.rootDiameter / 2)}H${x(s.end)}M${x(s.start)} ${y(-s.rootDiameter / 2)}H${x(s.end)}"/>` : ''}<text x="${x((s.start + s.end) / 2)}" y="${axis + 3.5}" text-anchor="middle">${String(i + 1).padStart(2, '0')}</text></g>`;
-    annotations += `<path class="profile-dimension" d="M${x(s.start)} 98V108M${x(s.start)} 103H${x(s.end)}M${x(s.end)} 98V108"/><text class="profile-dimension-label" x="${x((s.start + s.end) / 2)}" y="118" text-anchor="middle">${fmt(s.length)}</text>`;
-    if (i > 0) annotations += `<g class="profile-boundary" data-boundary="${i}" tabindex="0" role="slider" aria-label="第${i + 1}段起点" aria-valuenow="${s.start}" aria-valuemin="${layout[i - 1].start + .1}" aria-valuemax="${s.end - .1}"><path d="M${x(s.start)} 12V93"/><rect x="${x(s.start) - 3}" y="10" width="6" height="8" rx="2"/><rect class="boundary-hit" x="${x(s.start) - 7}" y="3" width="14" height="91"/></g>`;
-    annotations += `<text class="profile-station" x="${x(s.start)}" y="8" text-anchor="middle">${fmt(s.start)}</text>`;
+    const active = s.id === selectedSegment ? ' is-selected' : '';
+    paths += `<g class="profile-segment${active ? ' selected' : ''} ${s.type}" data-profile-segment="${escape(s.id)}" role="button" tabindex="0" aria-label="选择${escape(s.name)}"><polygon points="${points}"/>${s.type === 'gear' ? `<path class="gear-root-line" d="M${x(s.start)} ${y(s.rootDiameter / 2)}H${x(s.end)}M${x(s.start)} ${y(-s.rootDiameter / 2)}H${x(s.end)}"/>` : ''}<text x="${x((s.start + s.end) / 2)}" y="${axis - 3}" text-anchor="middle">${String(i + 1).padStart(2, '0')}</text></g>`;
+    annotations += `<path class="profile-dimension" d="M${x(s.start)} 103V113M${x(s.start)} 108H${x(s.end)}M${x(s.end)} 103V113"/>`;
+    labels += dimensionButton({ kind: 'segment-length', id: s.id }, fmt(s.length), x((s.start + s.end) / 2), 124, `${s.name} 段长 ${fmt(s.length)} mm`, `profile-length${active}`);
+    if (i > 0) {
+      annotations += `<g class="profile-boundary" data-boundary="${i}" tabindex="0" role="slider" aria-label="拖动第${i + 1}段起点" aria-valuenow="${s.start}" aria-valuemin="${layout[i - 1].start + .1}" aria-valuemax="${s.end - .1}"><path d="M${x(s.start)} 26V101"/><rect x="${x(s.start) - 3}" y="21" width="6" height="8" rx="2"/><rect class="boundary-hit" x="${x(s.start) - 7}" y="20" width="14" height="81"/></g>`;
+      labels += dimensionButton({ kind: 'segment-start', id: s.id }, fmt(s.start), x(s.start), 10, `${s.name} 起点 X ${fmt(s.start)} mm`, 'profile-position');
+    } else labels += `<span class="profile-origin" style="left:${x(0) / w * 100}%;top:${10 / h * 100}%" title="原点 X=0 固定">0</span>`;
+    if (s.type === 'cone') {
+      labels += dimensionButton(diameterTarget(s), `Ø${fmt(s.diameter)}`, x(s.start + s.length * .28), axis + 13, `${s.name} 左端直径 ${fmt(s.diameter)} mm`, `profile-diameter${active}`);
+      labels += dimensionButton(diameterTarget(s, true), `Ø${fmt(s.endDiameter)}`, x(s.start + s.length * .72), axis + 13, `${s.name} 右端直径 ${fmt(s.endDiameter)} mm`, `profile-diameter${active}`);
+    } else labels += dimensionButton(diameterTarget(s), `${s.type === 'gear' ? '齿顶 ' : ''}Ø${fmt(s.maxDiameter)}`, x((s.start + s.end) / 2), axis + 13, `${s.name} ${s.type === 'gear' ? '齿顶' : ''}直径 ${fmt(s.maxDiameter)} mm`, `profile-diameter${active}`);
   });
-  model.keyways.filter((k) => k.enabled).forEach((k) => { const s = layout.find((s) => s.id === k.segmentId); if (!s) return; const top = y(s.rootDiameter / 2) + 3; features += `<rect class="profile-keyway" x="${x(s.start + k.position)}" y="${top}" width="${k.length * scale}" height="4" rx="${k.ends === 'round' ? 2 : 0}"/>`; });
+  model.keyways.filter((k) => k.enabled).forEach((k) => {
+    const s = layout.find((s) => s.id === k.segmentId), axialLength = getKeywayAxialLength(k);
+    if (!s || !Number.isFinite(axialLength) || axialLength <= 0) return;
+    const start = s.start + k.position, radius = s.rootDiameter / 2;
+    if (k.ends === 'woodruff') {
+      const cutterRadius = (k.cutterDiameter ?? 24) / 2, center = start + axialLength / 2;
+      const points = Array.from({ length: 25 }, (_, i) => { const xx = start + axialLength * i / 24; const yy = radius - k.depth + cutterRadius - Math.sqrt(Math.max(0, cutterRadius ** 2 - (xx - center) ** 2)); return `${x(xx)},${y(yy)}`; });
+      features += `<polygon class="profile-keyway" points="${points.join(' ')}"><title>半圆键槽轴向剖面示意</title></polygon>`;
+    } else {
+      const x0 = x(start), x1 = x(start + axialLength), top = y(radius) + 3, bottom = top + 4;
+      const roundLeft = ['round', 'round-left'].includes(k.ends), roundRight = ['round', 'round-right'].includes(k.ends), r = Math.min(2, (x1 - x0) / 2);
+      features += `<path class="profile-keyway" d="M${x0 + (roundLeft ? r : 0)} ${top}H${x1 - (roundRight ? r : 0)}${roundRight ? `Q${x1} ${top} ${x1} ${top + 2}Q${x1} ${bottom} ${x1 - r} ${bottom}` : `V${bottom}`}H${x0 + (roundLeft ? r : 0)}${roundLeft ? `Q${x0} ${bottom} ${x0} ${top + 2}Q${x0} ${top} ${x0 + r} ${top}` : `V${top}`}Z"/>`;
+    }
+  });
   model.holes.filter((hole) => hole.enabled && hole.pcd === 0).forEach((hole) => { const d = hole.through ? length : hole.depth, start = hole.face === 'left' ? 0 : length - d; features += `<rect class="profile-hole" x="${x(start)}" y="${y(hole.diameter / 2)}" width="${d * scale}" height="${hole.diameter * radial}"/>`; });
-  $('#profile-chart').innerHTML = `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-label="阶梯轴向轮廓"><defs><pattern id="gear-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(30)"><line x1="0" y1="0" x2="0" y2="6"/></pattern></defs><path class="profile-axis" d="M15 ${axis}H${w - 15}"/>${paths}${features}${annotations}<text class="profile-station" x="${x(length)}" y="8" text-anchor="middle">${fmt(length)}</text><text class="profile-axis-label" x="${w - 10}" y="${axis - 6}" text-anchor="end">X</text></svg>`;
+  labels += dimensionButton({ kind: 'total-length' }, fmt(length), x(length), 10, `总长 ${fmt(length)} mm`, 'profile-position');
+  const chart = $('#profile-chart'), scrollLeft = chart.scrollLeft;
+  chart.innerHTML = `<div class="profile-drawing" style="min-width:${Math.max(560, layout.length * 72 + 96)}px"><svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-label="阶梯轴向轮廓"><path class="profile-axis" d="M15 ${axis}H${w - 15}"/>${paths}${features}${annotations}<text class="profile-axis-label" x="${w - 10}" y="${axis - 6}" text-anchor="end">X</text></svg><div class="profile-label-layer">${labels}</div></div>`;
+  chart.scrollLeft = scrollLeft;
 }
 
 function selectSegment(id, switchTab = false) {
   if (!model.segments.some((s) => s.id === id)) return;
+  closeDimensionEditor(false);
   selectedSegment = id;
   if (switchTab) activeTab = 'segments';
   renderPanel(); renderProfile();
 }
 function record() { history.push(cloneModel(model)); if (history.length > 60) history.shift(); future = []; }
 function commit(change, { fit = false, message = '', rerender = true } = {}) {
+  closeDimensionEditor(false);
   record(); change(model); revision++; needsFit ||= fit;
   currentValidation = validateModel(model);
   if (currentValidation.errors.length === 0) { try { localStorage.setItem(STORAGE, JSON.stringify(model)); $('#save-state span').textContent = '已自动保存'; } catch { $('#save-state span').textContent = '本机保存不可用'; } }
@@ -193,6 +324,7 @@ function commit(change, { fit = false, message = '', rerender = true } = {}) {
   if (message) toast(message);
 }
 function restoreState(next, fromHistory = false) {
+  closeDimensionEditor(false);
   model = cloneModel(next); revision++; needsFit = true;
   if (!model.segments.some((s) => s.id === selectedSegment)) selectedSegment = model.segments[0].id;
   selectedKeyway = model.keyways.find((k) => k.id === selectedKeyway)?.id || model.keyways[0]?.id;
@@ -386,6 +518,26 @@ $('#export-button').onclick = (e) => { e.stopPropagation(); toggleMenu('#export-
 document.addEventListener('click', (event) => { if (!event.target.closest('.popover')) closeMenus(); });
 document.querySelectorAll('[data-preset]').forEach((b) => b.onclick = () => { const p = PRESETS.find((p) => p.id === b.dataset.preset); if (!p) return; record(); activeTab = 'segments'; restoreState(p.model); closeMenus(); toast(`已载入 ${p.name}`); });
 document.querySelectorAll('[data-export]').forEach((b) => b.onclick = () => exportModel(b.dataset.export));
+$('#dimension-editor').addEventListener('submit', (event) => { event.preventDefault(); applyDimensionEditor(); });
+$('#dimension-editor-close').addEventListener('click', () => closeDimensionEditor());
+$('#dimension-editor-input').addEventListener('input', () => { $('#dimension-editor-input').removeAttribute('aria-invalid'); $('#dimension-editor-error').hidden = true; positionDimensionEditor(); });
+$('#dimension-editor').addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeDimensionEditor(); }
+  if (event.key === 'Tab') {
+    const controls = [...$('#dimension-editor').querySelectorAll('input,button')], first = controls[0], last = controls.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
+});
+document.addEventListener('pointerdown', (event) => { if (dimensionEditState && !$('#dimension-editor').contains(event.target)) closeDimensionEditor(false); }, true);
+window.addEventListener('resize', () => closeDimensionEditor(false));
+$('#profile-chart').addEventListener('scroll', () => { if (dimensionEditState?.surface === 'profile' && $('#profile-chart').scrollLeft !== dimensionEditState.scrollLeft) closeDimensionEditor(false); });
+$('#profile-panel').addEventListener('click', (event) => {
+  const anchor = event.target.closest('[data-dimension-kind]');
+  if (!anchor) return;
+  event.stopPropagation();
+  openDimensionEditor({ kind: anchor.dataset.dimensionKind, ...(anchor.dataset.segmentId ? { id: anchor.dataset.segmentId } : {}) }, anchor);
+});
 $('#help-button').onclick = () => $('#help-dialog').showModal(); document.querySelectorAll('[data-close-dialog]').forEach((b) => b.onclick = () => $('#help-dialog').close());
 $('#help-dialog').addEventListener('click', (e) => { if (e.target === $('#help-dialog')) $('#help-dialog').close(); });
 $('#fit-button').onclick = () => viewport?.fit();
@@ -419,6 +571,10 @@ $('#profile-chart').addEventListener('pointerdown', (event) => {
 $('#profile-chart').addEventListener('click', (event) => { const s = event.target.closest('[data-profile-segment]'); if (s) selectSegment(s.dataset.profileSegment, true); });
 $('#profile-chart').addEventListener('keydown', (event) => { const el = event.target; if (el.dataset.profileSegment && ['Enter', ' '].includes(event.key)) { event.preventDefault(); selectSegment(el.dataset.profileSegment, true); } const i = Number(el.dataset.boundary); if (i && ['ArrowLeft', 'ArrowRight'].includes(event.key)) { event.preventDefault(); const d = event.key === 'ArrowRight' ? 1 : -1; commit((m) => { m.segments[i - 1].length += d; m.segments[i].length -= d; }); } });
 document.addEventListener('keydown', (event) => {
+  if (dimensionEditState) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); if (applyDimensionEditor()) saveProject(); }
+    return;
+  }
   const editing = event.target.matches('input,select,textarea');
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); if (editing) event.target.blur(); saveProject(); }
   else if (!editing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); }

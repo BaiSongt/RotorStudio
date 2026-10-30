@@ -1,8 +1,8 @@
 import {
-  draw, makeBox, makeCylinder, measureShapeVolumeProperties,
+  draw, makeBox, makeCylinder,
   measureShapeSurfaceProperties, getOC, iterTopo,
 } from 'replicad';
-import { validateModel, getSegmentLayout } from './schema.js';
+import { validateModel, getSegmentLayout, getKeywayAxialLength } from './schema.js';
 
 const DEG = Math.PI / 180;
 const EPS = 0.01;
@@ -131,19 +131,44 @@ function radiusAt(segment, position) {
 
 function keywayTool(keyway, segment) {
   const x0 = segment.start + keyway.position;
-  const x1 = x0 + keyway.length;
-  const radius = Math.min(radiusAt(segment, keyway.position), radiusAt(segment, keyway.position + keyway.length));
+  const axialLength = getKeywayAxialLength(keyway);
+  const x1 = x0 + axialLength;
+  const radius = Math.min(radiusAt(segment, keyway.position), radiusAt(segment, keyway.position + axialLength));
   const floor = radius - keyway.depth;
   const top = segment.maxDiameter / 2 + EPS;
   const width = keyway.width;
   let tool;
-  if (keyway.ends === 'round') {
+  if (keyway.ends === 'woodruff') {
+    const cutterRadius = (keyway.cutterDiameter ?? 24) / 2;
+    const centerX = x0 + axialLength / 2;
+    const centerY = radius - keyway.depth + cutterRadius;
+    // 圆盘刀轴线沿 Z，切削厚度就是槽宽；最低点为外圆顶部减去设定深度。
+    tool = makeCylinder(cutterRadius, width, [centerX, centerY, -width / 2], [0, 0, 1]);
+    // 圆盘伸出名义槽口的部分高于本段外圆；限于宿主阶梯，避免误切相邻大轴肩。
+    const clip = makeBox([segment.start, centerY - cutterRadius - EPS, -width / 2 - EPS],
+      [segment.end, centerY + cutterRadius + EPS, width / 2 + EPS]);
+    tool = joined(tool, clip, 'intersect');
+  } else if (keyway.ends === 'round') {
     const half = width / 2;
     tool = makeCylinder(half, top - floor, [x0 + half, floor, 0], [0, 1, 0]);
     if (keyway.length > width + 1e-8) {
       const far = makeCylinder(half, top - floor, [x1 - half, floor, 0], [0, 1, 0]);
       tool = joined(tool, far);
       tool = joined(tool, makeBox([x0 + half, floor, -half], [x1 - half, top, half]));
+    }
+  } else if (keyway.ends === 'round-left' || keyway.ends === 'round-right') {
+    const half = width / 2;
+    const leftRounded = keyway.ends === 'round-left';
+    const capCenter = leftRounded ? x0 + half : x1 - half;
+    tool = makeCylinder(half, top - floor, [capCenter, floor, 0], [0, 1, 0]);
+    // 保留指定一侧的真实半圆，长度等于半个槽宽时也能形成合法的半圆槽。
+    const capClip = makeBox([leftRounded ? x0 - EPS : capCenter, floor - EPS, -half - EPS],
+      [leftRounded ? capCenter : x1 + EPS, top + EPS, half + EPS]);
+    tool = joined(tool, capClip, 'intersect');
+    if (axialLength > half + 1e-8) {
+      const body = makeBox([leftRounded ? capCenter : x0, floor, -half],
+        [leftRounded ? x1 : capCenter, top, half]);
+      tool = joined(tool, body);
     }
   } else {
     tool = makeBox([x0, floor, -width / 2], [x1, top, width / 2]);
@@ -162,8 +187,13 @@ function countTopology(shape, kind) {
 }
 
 function checkedVolume(shape) {
-  const props = measureShapeVolumeProperties(shape);
-  try { return props.volume; }
+  const oc = getOC();
+  const props = new oc.GProp_GProps_1();
+  try {
+    // 交叉圆柱和单圆头槽含裁剪曲面，使用自适应积分保证镜像、旋转后的统计一致。
+    oc.BRepGProp.VolumeProperties_2(shape.wrapped, props, 1e-9, true, false);
+    return props.Mass();
+  }
   finally { dispose(props); }
 }
 

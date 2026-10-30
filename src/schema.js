@@ -36,8 +36,21 @@ export function createSegment(overrides = {}) {
 export function createKeyway(segmentId, overrides = {}) {
   return {
     id: uid('key'), segmentId, position: 5, length: 20, width: 8, depth: 3,
-    angle: 0, ends: 'round', enabled: true, ...overrides,
+    angle: 0, ends: 'round', cutterDiameter: 24, enabled: true, ...overrides,
   };
+}
+
+/**
+ * 返回槽口沿 X 轴的有效总长。半圆键槽由圆盘刀与轴顶切平面的交线确定，
+ * length 仅保留切换前的平键槽草稿。旧版工程没有刀径时按 24 mm 读取。
+ */
+export function getKeywayAxialLength(key) {
+  if (!isObject(key)) return NaN;
+  if (key.ends !== 'woodruff') return isFiniteNumber(key.length) ? key.length : NaN;
+  const diameter = Object.hasOwn(key, 'cutterDiameter') ? key.cutterDiameter : 24;
+  if (!isFiniteNumber(diameter) || !isFiniteNumber(key.depth)) return NaN;
+  const squaredHalfLength = key.depth * (diameter - key.depth);
+  return squaredHalfLength >= 0 ? 2 * Math.sqrt(squaredHalfLength) : NaN;
 }
 
 export function createHole(overrides = {}) {
@@ -236,16 +249,34 @@ export function validateModel(model) {
     if (typeof key.enabled !== 'boolean') errors.push(`${label}启用状态必须为布尔值。`);
     if (typeof key.segmentId !== 'string' || !segmentMap.has(key.segmentId)) errors.push(`${label}引用的阶梯不存在。`);
     number(key.position, `${label}起点`, 0, LIMITS.maxLength);
-    number(key.length, `${label}长度`, LIMITS.minLength, LIMITS.maxLength);
+    if (key.ends === 'woodruff') finite(key.length, `${label}平键槽长度草稿`);
+    else number(key.length, `${label}长度`, LIMITS.minLength, LIMITS.maxLength);
     number(key.width, `${label}宽度`, 0.1, LIMITS.maxDiameter);
     number(key.depth, `${label}深度`, 0.05, LIMITS.maxDiameter);
     number(key.angle, `${label}周向角度`, -3600, 3600);
-    if (!['round', 'square'].includes(key.ends)) errors.push(`${label}端部形式必须为 round 或 square。`);
+    const cutterDiameter = Object.hasOwn(key, 'cutterDiameter') ? key.cutterDiameter : 24;
+    if (key.ends === 'woodruff') number(cutterDiameter, `${label}圆盘刀直径`, LIMITS.minDiameter, LIMITS.maxDiameter);
+    else finite(cutterDiameter, `${label}圆盘刀直径草稿`);
+    if (!['round', 'square', 'round-left', 'round-right', 'woodruff'].includes(key.ends)) {
+      errors.push(`${label}类型必须为 round、square、round-left、round-right 或 woodruff。`);
+    }
     if (errors.length !== previousErrors || !key.enabled) continue;
     const segment = segmentMap.get(key.segmentId);
-    if (key.position + key.length > segment.length + EPS) errors.push(`${label}超出所属阶梯长度。`);
+    const axialLength = getKeywayAxialLength(key);
+    if (!isFiniteNumber(axialLength) || axialLength < LIMITS.minLength || axialLength > LIMITS.maxLength) {
+      errors.push(`${label}有效轴向长度必须在${LIMITS.minLength}～${LIMITS.maxLength} mm之间，请检查刀径和深度。`);
+      continue;
+    }
+    if (key.position + axialLength > segment.length + EPS) errors.push(`${label}超出所属阶梯长度。`);
     if (key.ends === 'round' && key.length < key.width - EPS) errors.push(`${label}圆头槽的总长度不能小于槽宽。`);
-    const radius = minSegmentRadius(segment, key.position, Math.min(key.position + key.length, segment.length), false);
+    if (['round-left', 'round-right'].includes(key.ends) && key.length < key.width / 2 - EPS) {
+      errors.push(`${label}单圆头槽的总长度不能小于槽宽的一半。`);
+    }
+    if (key.ends === 'woodruff') {
+      if (segment.type !== 'cylinder') errors.push(`${label}半圆键槽仅支持圆柱段；圆锥或齿轮段请选择平键槽。`);
+      if (key.depth >= cutterDiameter / 2 - EPS) errors.push(`${label}半圆键槽深度必须小于圆盘刀半径，避免生成大于半圆的槽。`);
+    }
+    const radius = minSegmentRadius(segment, key.position, Math.min(key.position + axialLength, segment.length), false);
     if (key.width >= 2 * radius - MIN_WALL) errors.push(`${label}宽度必须小于所属区间直径。`);
     if (key.depth >= radius - MIN_WALL) errors.push(`${label}深度必须小于所属区间半径，避免穿越轴心。`);
     if (key.width < 2 * radius) {
@@ -253,10 +284,10 @@ export function validateModel(model) {
       if (key.depth <= shoulderSag + EPS) errors.push(`${label}深度不足以在圆面上形成完整槽宽，请增大深度或减小宽度。`);
     }
     const run = getChamferRun(segment);
-    if (key.position < run.left - EPS || key.position + key.length > segment.length - run.right + EPS) warnings.push(`${label}与端部倒角相交，槽口会随端面外形截断。`);
-    if (segment.type === 'cone') warnings.push(`${label}位于圆锥面：槽底保持平面，深度以槽区间的最小半径计算。`);
-    if (segment.type === 'gear') warnings.push(`${label}位于齿轮段：深度以齿根圆计算，槽口会切除局部齿形。`);
-    activeKeys.push({ key, segment, label, minRadius: radius });
+    if (key.position < run.left - EPS || key.position + axialLength > segment.length - run.right + EPS) warnings.push(`${label}与端部倒角相交，槽口会随端面外形截断。`);
+    if (key.ends !== 'woodruff' && segment.type === 'cone') warnings.push(`${label}位于圆锥面：槽底保持平面，深度以槽区间的最小半径计算。`);
+    if (key.ends !== 'woodruff' && segment.type === 'gear') warnings.push(`${label}位于齿轮段：深度以齿根圆计算，槽口会切除局部齿形。`);
+    activeKeys.push({ key, segment, label, minRadius: radius, axialLength });
   }
   let totalHoles = 0;
   const minRadiusOverInterval = (start, end) => {
@@ -329,7 +360,7 @@ export function validateModel(model) {
   }
   for (const item of activeKeys) {
     const keyStart = item.segment.start + item.key.position;
-    const keyEnd = keyStart + item.key.length;
+    const keyEnd = keyStart + item.axialLength;
     for (const pattern of activeHolePatterns) {
       if (Math.min(keyEnd, pattern.end) <= Math.max(keyStart, pattern.start) + EPS) continue;
       if (pattern.hole.pcd / 2 + pattern.hole.diameter / 2 >= item.minRadius - item.key.depth - EPS) {
@@ -342,9 +373,16 @@ export function validateModel(model) {
 
 /** 导入按当前格式严格验证，不将字符串强转数字，不静默改变用户尺寸。 */
 export function normalizeModel(raw) {
-  const { errors } = validateModel(raw);
+  const model = cloneModel(raw);
+  if (isObject(model) && Array.isArray(model.keyways)) {
+    for (const key of model.keyways) {
+      // 只补不存在的新增字段；显式 null、字符串或其他非法值仍交给验证处理。
+      if (isObject(key) && !Object.hasOwn(key, 'cutterDiameter')) key.cutterDiameter = 24;
+    }
+  }
+  const { errors } = validateModel(model);
   if (errors.length) throw new Error(errors.join('\n'));
-  return cloneModel(raw);
+  return model;
 }
 
 const gearShaft = {
