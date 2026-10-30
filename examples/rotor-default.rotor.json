@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "name": "阶梯齿轮轴",
+  "material": "steel",
+  "quality": "standard",
+  "segments": [
+    {
+      "id": "shaft-01",
+      "name": "左轴颈",
+      "type": "cylinder",
+      "length": 28,
+      "diameter": 28,
+      "endDiameter": 28,
+      "chamferLeft": 1,
+      "chamferRight": 0,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    },
+    {
+      "id": "shaft-02",
+      "name": "左轴肩",
+      "type": "cylinder",
+      "length": 32,
+      "diameter": 36,
+      "endDiameter": 36,
+      "chamferLeft": 0,
+      "chamferRight": 0,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    },
+    {
+      "id": "shaft-03",
+      "name": "直齿轮",
+      "type": "gear",
+      "length": 34,
+      "diameter": 48,
+      "endDiameter": 48,
+      "chamferLeft": 0,
+      "chamferRight": 0,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    },
+    {
+      "id": "shaft-04",
+      "name": "键连接段",
+      "type": "cylinder",
+      "length": 52,
+      "diameter": 34,
+      "endDiameter": 34,
+      "chamferLeft": 0,
+      "chamferRight": 0,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    },
+    {
+      "id": "shaft-05",
+      "name": "右轴颈",
+      "type": "cylinder",
+      "length": 34,
+      "diameter": 26,
+      "endDiameter": 26,
+      "chamferLeft": 0,
+      "chamferRight": 1,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    }
+  ],
+  "keyways": [
+    {
+      "id": "key-01",
+      "segmentId": "shaft-04",
+      "position": 7,
+      "length": 36,
+      "width": 8,
+      "depth": 3,
+      "angle": 0,
+      "ends": "round",
+      "enabled": true
+    }
+  ],
+  "holes": [
+    {
+      "id": "hole-01",
+      "face": "right",
+      "diameter": 10,
+      "depth": 22,
+      "through": false,
+      "count": 1,
+      "pcd": 0,
+      "angle": 0,
+      "counterboreDiameter": 14,
+      "counterboreDepth": 3,
+      "enabled": true
+    }
+  ]
+}

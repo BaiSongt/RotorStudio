@@ -1,0 +1,27 @@
+{
+  "name": "阶梯齿轮轴",
+  "unit": "mm",
+  "coordinateSystem": "X轴向，左端X=0；Y向上，Z径向",
+  "kernel": "replicad 0.19.1 / replicad-opencascadejs 0.19.0",
+  "volume": 172613.66897178683,
+  "area": 29513.62426926909,
+  "solids": 1,
+  "faces": 885,
+  "length": 180,
+  "maxDiameter": 52,
+  "triangles": 6020,
+  "originalBRepValid": true,
+  "stepRoundtrip": {
+    "solids": 1,
+    "valid": true,
+    "volume": 172613.6689717858,
+    "relativeVolumeError": 5.9012363971718385e-15
+  },
+  "files": {
+    "stepBytes": 3513288,
+    "stlBytes": 301084,
+    "stlTriangles": 6020
+  },
+  "warnings": [],
+  "gearNote": "固定采样渐开线近似实体，齿侧为折面；未模拟滚刀包络齿根，不作为制造级齿轮定型依据。"
+}

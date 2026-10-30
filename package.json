@@ -1,0 +1,23 @@
+{
+  "name": "rotor-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "基于 Three.js 与 OpenCascade 的回转体参数化实体建模工具",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "start": "node server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "three": "0.180.0",
+    "replicad": "0.19.1",
+    "replicad-opencascadejs": "0.19.0",
+    "lucide": "0.468.0"
+  },
+  "devDependencies": { "vite": "7.1.7" },
+  "engines": { "node": ">=20.19" },
+  "packageManager": "pnpm@11.25.0"
+}

@@ -1,0 +1,21 @@
+{
+  "retrieved_on": "2026-10-30",
+  "repository": "Open-Cascade-SAS/OCCT",
+  "ref": "master",
+  "files": [
+    {
+      "file": "licenses/LICENSE_LGPL_21.txt",
+      "source": "https://github.com/Open-Cascade-SAS/OCCT/blob/master/LICENSE_LGPL_21.txt",
+      "blob_sha": "732811e4f1faf71870b7350f211b26e00d7bfbe9",
+      "sha256": "e237fa56668030e928551ddd60f05df5fe957f75eab874bbd017e085ed722e7c",
+      "bytes": 26434
+    },
+    {
+      "file": "licenses/OCCT_LGPL_EXCEPTION.txt",
+      "source": "https://github.com/Open-Cascade-SAS/OCCT/blob/master/OCCT_LGPL_EXCEPTION.txt",
+      "blob_sha": "263d14ef75d9172e59213d880605729eed3041fc",
+      "sha256": "04580a884ea6cea294402649ff7b5cbb167d47462d1340a4ed33e550db10a81b",
+      "bytes": 663
+    }
+  ]
+}
