@@ -3,6 +3,7 @@ import {
   measureShapeSurfaceProperties, getOC, iterTopo,
 } from 'replicad';
 import { validateModel, getSegmentLayout, getKeywayAxialLength } from './schema.js';
+import { applyFeature } from './cad-features.js';
 
 const DEG = Math.PI / 180;
 const EPS = 0.01;
@@ -257,6 +258,33 @@ export function buildModel(model, onProgress = () => {}) {
         }
       }
       if (before - checkedVolume(shape) < 1e-7) warnings.push('某组端面孔未产生新的去料，可能与已有孔完全重叠。');
+    }
+    // v1 的阶梯、齿轮、键槽和端面孔保持原构建顺序；新特征在其后按列表顺序执行。
+    for (const feature of model.features || []) {
+      if (feature.enabled === false) continue;
+      const label = `${feature.name || feature.type}（${feature.id}）`;
+      onProgress(`正在生成特征：${label}`);
+      let candidate = null;
+      try {
+        const before = checkedVolume(shape);
+        candidate = applyFeature(shape, model, feature, { layout, length });
+        checkSolid(candidate);
+        const after = checkedVolume(candidate);
+        if (!Number.isFinite(after) || after <= 0) throw new Error('特征生成的实体体积无效。');
+        if (before - after < 1e-7) warnings.push(`${label}未产生新的去料，可能与已有特征完全重叠。`);
+        // 只有该特征通过实体检查后才替换当前构建结果；Worker 仍只缓存整次成功结果。
+        dispose(shape);
+        shape = candidate;
+        candidate = null;
+      } catch (error) {
+        dispose(candidate);
+        const reason = error instanceof Error ? error.message : `几何内核运算失败（${String(error).slice(0, 120)}）。`;
+        const failure = new Error(`特征 ${label}：${reason}`, { cause: error });
+        failure.featureId = feature.id;
+        failure.featureName = feature.name;
+        failure.code = 'FEATURE_BUILD_FAILED';
+        throw failure;
+      }
     }
     onProgress('正在校验实体并生成显示网格');
     const solids = checkSolid(shape);

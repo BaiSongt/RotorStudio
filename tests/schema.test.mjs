@@ -51,7 +51,7 @@ test('严格拒绝非有限数、数字字符串、错误版本和重复标识',
     const model = simpleModel(); model.segments[0].diameter = invalid;
     expectError(model, /有限数字/);
   }
-  const model = simpleModel(); model.schemaVersion = 2;
+  const model = simpleModel(); model.schemaVersion = 3;
   expectError(model, /工程版本/);
   const duplicate = simpleModel(); duplicate.segments.push(createSegment({ id: 's1' }));
   expectError(duplicate, /重复 id/);

@@ -1,5 +1,8 @@
+import { validateFeatures } from './features.js';
+export { createFeature, createBoreSegment, getBoreLayout, getFeatureDimensions, featureLabel, THREAD_PRESETS, ROTATIONAL_PRESETS } from './features.js';
+
 /** 参数工程数据、几何约束与演示案例。所有长度均使用毫米。 */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const MATERIALS = Object.freeze({
   steel: { name: '钢', density: 7.85 },
   aluminum: { name: '铝合金', density: 2.7 },
@@ -129,7 +132,11 @@ export function minSegmentRadius(segment, localStart = 0, localEnd = segment.len
 
 function validateStructure(model, errors) {
   if (!isObject(model)) { errors.push('参数工程必须是 JSON 对象。'); return false; }
-  if (model.schemaVersion !== SCHEMA_VERSION) errors.push(`不支持的工程版本：仅支持 schemaVersion = ${SCHEMA_VERSION}。`);
+  if (![1, 2].includes(model.schemaVersion)) errors.push('不支持的工程版本：仅支持 schemaVersion = 1 或 2。');
+  if (model.schemaVersion === 2) {
+    if (!['shaft', 'disk', 'sleeve', 'housing'].includes(model.partFamily)) errors.push('v2 零件类型必须为 shaft、disk、sleeve 或 housing。');
+    if (!Array.isArray(model.features)) errors.push('v2 工程的 features 必须为数组。');
+  }
   if (typeof model.name !== 'string' || !model.name.trim() || model.name.length > 100) errors.push('零件名称必须为1～100个字符。');
   if (!Object.hasOwn(MATERIALS, model.material)) errors.push('材料必须为 steel、aluminum 或 titanium。');
   if (!['standard', 'fine'].includes(model.quality)) errors.push('网格精度必须为 standard 或 fine。');
@@ -368,6 +375,11 @@ export function validateModel(model) {
       }
     }
   }
+  if (model.schemaVersion === 2 && !errors.length) {
+    const result = validateFeatures(model, { outerLayout: layout });
+    errors.push(...result.errors);
+    warnings.push(...result.warnings);
+  }
   return { errors: [...new Set(errors)], warnings: [...new Set(warnings)] };
 }
 
@@ -382,6 +394,17 @@ export function normalizeModel(raw) {
   }
   const { errors } = validateModel(model);
   if (errors.length) throw new Error(errors.join('\n'));
+  return model;
+}
+
+/** 显式升级仅补 v2 容器；旧基体、键槽、孔的 id、尺寸和执行顺序完全保留。 */
+export function upgradeModel(raw) {
+  const model = normalizeModel(raw);
+  if (model.schemaVersion === 1) {
+    model.schemaVersion = 2;
+    model.partFamily = 'shaft';
+    model.features = [];
+  }
   return model;
 }
 

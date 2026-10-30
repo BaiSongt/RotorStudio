@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 2,
+  "name": "独立内阶梯套",
+  "partFamily": "sleeve",
+  "material": "steel",
+  "quality": "standard",
+  "segments": [
+    {
+      "id": "tube-left",
+      "name": "左定位外圆",
+      "type": "cylinder",
+      "length": 20,
+      "diameter": 54,
+      "endDiameter": 54,
+      "chamferLeft": 0.8,
+      "chamferRight": 0,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    },
+    {
+      "id": "tube-body",
+      "name": "套筒主体",
+      "type": "cylinder",
+      "length": 60,
+      "diameter": 62,
+      "endDiameter": 62,
+      "chamferLeft": 0,
+      "chamferRight": 0,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    },
+    {
+      "id": "tube-right",
+      "name": "右定位外圆",
+      "type": "cylinder",
+      "length": 20,
+      "diameter": 54,
+      "endDiameter": 54,
+      "chamferLeft": 0,
+      "chamferRight": 0.8,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    }
+  ],
+  "keyways": [],
+  "holes": [],
+  "features": [
+    {
+      "id": "tube-bore",
+      "type": "bore",
+      "name": "四级独立内轮廓",
+      "enabled": true,
+      "face": "left",
+      "offset": 0,
+      "termination": "through-all",
+      "segments": [
+        {
+          "id": "tube-in-1",
+          "name": "入口内圆",
+          "type": "cylinder",
+          "length": 18,
+          "diameter": 32,
+          "endDiameter": 32
+        },
+        {
+          "id": "tube-in-2",
+          "name": "内锥过渡",
+          "type": "cone",
+          "length": 12,
+          "diameter": 32,
+          "endDiameter": 38
+        },
+        {
+          "id": "tube-in-3",
+          "name": "主内孔",
+          "type": "cylinder",
+          "length": 55,
+          "diameter": 38,
+          "endDiameter": 38
+        },
+        {
+          "id": "tube-in-4",
+          "name": "末端内圆",
+          "type": "cylinder",
+          "length": 15,
+          "diameter": 34,
+          "endDiameter": 34
+        }
+      ]
+    },
+    {
+      "id": "tube-seal",
+      "type": "groove",
+      "name": "内密封环槽",
+      "enabled": true,
+      "location": "inner",
+      "segmentId": "",
+      "boreId": "tube-bore",
+      "boreSegmentId": "tube-in-3",
+      "position": 10,
+      "width": 3,
+      "depth": 1.2
+    },
+    {
+      "id": "tube-key",
+      "type": "internal-keyway",
+      "name": "内孔键槽",
+      "enabled": true,
+      "boreId": "tube-bore",
+      "boreSegmentId": "tube-in-3",
+      "position": 20,
+      "length": 24,
+      "width": 6,
+      "depth": 2,
+      "angle": 0
+    }
+  ]
+}

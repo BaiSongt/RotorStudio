@@ -1,0 +1,26 @@
+{
+  "presetId": "flange-disk",
+  "name": "六孔法兰盘",
+  "schemaVersion": 2,
+  "partFamily": "disk",
+  "units": {
+    "length": "mm",
+    "area": "mm²",
+    "volume": "mm³"
+  },
+  "volume": 144763.84387276124,
+  "area": 27078.842866575378,
+  "solids": 1,
+  "faces": 30,
+  "length": 30,
+  "maxDiameter": 100,
+  "triangles": 5712,
+  "warnings": [],
+  "stepValidation": {
+    "valid": true,
+    "solids": 1,
+    "volume": 144763.84387276266,
+    "relativeVolumeError": 9.851131706846617e-15,
+    "byteLength": 72674
+  }
+}

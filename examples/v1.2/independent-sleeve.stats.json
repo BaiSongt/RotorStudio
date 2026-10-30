@@ -1,0 +1,26 @@
+{
+  "presetId": "independent-sleeve",
+  "name": "独立内阶梯套",
+  "schemaVersion": 2,
+  "partFamily": "sleeve",
+  "units": {
+    "length": "mm",
+    "area": "mm²",
+    "volume": "mm³"
+  },
+  "volume": 169857.60762594792,
+  "area": 34651.806945043405,
+  "solids": 1,
+  "faces": 23,
+  "length": 100,
+  "maxDiameter": 62,
+  "triangles": 3200,
+  "warnings": [],
+  "stepValidation": {
+    "valid": true,
+    "solids": 1,
+    "volume": 169857.60762594445,
+    "relativeVolumeError": 2.038975982740875e-14,
+    "byteLength": 56068
+  }
+}

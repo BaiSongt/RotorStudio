@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { PartViewport, createDimensionButton } from '../src/viewport.js';
 import { createSegment, getSegmentLayout, getModelBounds } from '../src/schema.js';
+import { createFeature, createBoreSegment } from '../src/features.js';
 
 // 使用 Node 原生 EventTarget 检查实际注册的事件和回调，不创建 WebGL。
 // 此替身不模拟浏览器的键盘默认行为；Enter / Space 激活由真实浏览器另行检查。
@@ -38,16 +39,17 @@ function documentFixture() {
   return documentRef;
 }
 
-function viewportFixture(segments, selectedId = segments[0].id) {
+function viewportFixture(segments, selectedId = segments[0].id, features = []) {
   const viewport = Object.create(PartViewport.prototype);
   const documentRef = documentFixture();
-  viewport.model = { segments };
+  viewport.model = { segments, features };
   viewport.layout = getSegmentLayout(viewport.model);
   const bounds = getModelBounds(viewport.model);
   viewport.length = bounds.length;
   viewport.radius = bounds.maxDiameter / 2;
   viewport.palette = { accent: 0x197d8c, axis: 0x9aadb7, label: '#516773', labelBackground: 'rgba(248,250,251,.92)' };
   viewport.dimensionGroup = new THREE.Group();
+  viewport.featureGroup = new THREE.Group();
   viewport.labelLayer = documentRef.createElement('div');
   viewport.labels = [];
   viewport.dimensionsVisible = true;
@@ -56,8 +58,10 @@ function viewportFixture(segments, selectedId = segments[0].id) {
   viewport.controls = { enabled: true, autoRotate: true };
   viewport.rotationChanges = [];
   viewport.editRequests = [];
+  viewport.featureRequests = [];
   viewport.onAutoRotateChange = (enabled) => viewport.rotationChanges.push(enabled);
   viewport.onDimensionEdit = (target, anchorElement) => viewport.editRequests.push({ target, anchorElement, rotating: viewport.controls.autoRotate });
+  viewport.onFeatureSelect = (id, subId) => viewport.featureRequests.push({ id, subId, rotating: viewport.controls.autoRotate });
   viewport._createDimensions();
   return viewport;
 }
@@ -220,4 +224,108 @@ test('标签重建保持原尺寸目标的键盘焦点，但不会抢走共享�
   assert.equal(sharedInput.value, '45.6');
   assert.ok(viewport.labels.every(({ element }) => element.lastFocusOptions === undefined));
   assert.equal(viewport.dimensionEditing, true);
+});
+
+test('新特征尺寸保留完整字段和子段映射，只显示当前特征并在切回轴段时清除辅助线', () => {
+  const bore = createFeature('bore', { id: 'bore', segments: [
+    createBoreSegment({ id: 'inner-a', name: '内孔一', length: 20, diameter: 24 }),
+    createBoreSegment({ id: 'inner-b', name: '内孔二', length: 30, diameter: 20 }),
+  ] });
+  const viewport = viewportFixture([createSegment({ id: 'outer', length: 100, diameter: 60 })], 'outer', [bore]);
+  viewport.setFeatureSelection('bore', 'inner-b');
+  assert.ok(viewport.featureGroup.children.length > 0);
+  assert.ok(viewport.labels.every(({ target }) => target.kind === 'feature-parameter' && target.id === 'bore'));
+  const diameter = viewport.labels.find(({ target }) => target.key === 'diameter');
+  assert.equal(diameter.element.dataset.featureId, 'bore');
+  assert.equal(diameter.element.dataset.segmentId, undefined);
+  assert.equal(diameter.element.dataset.dimensionKey, 'diameter');
+  assert.equal(diameter.element.dataset.dimensionSubId, 'inner-b');
+  diameter.element.click();
+  assert.deepEqual(viewport.editRequests.at(-1).target, { kind: 'feature-parameter', id: 'bore', key: 'diameter', subId: 'inner-b' });
+  assert.equal(viewport.editRequests.at(-1).rotating, false);
+
+  viewport.setSelection('outer');
+  assert.equal(viewport.selectedFeatureId, null);
+  assert.equal(viewport.featureGroup.children.length, 0);
+  assert.ok(findLabel(viewport, 'segment-diameter', 'outer'));
+  assert.ok(viewport.labels.every(({ target }) => target.kind !== 'feature-parameter'));
+});
+
+test('同一特征的多个尺寸重建后按key与subId恢复焦点，浮动编辑输入仍不会被抢焦点', () => {
+  const bore = createFeature('bore', { id: 'bore', segments: [createBoreSegment({ id: 'inner', length: 40, diameter: 20 })] });
+  const viewport = viewportFixture([createSegment({ id: 'outer', length: 100, diameter: 60 })], 'outer', [bore]);
+  viewport.setFeatureSelection('bore', 'inner');
+  const doc = viewport.labelLayer.ownerDocument;
+  viewport.labels.find(({ target }) => target.key === 'diameter').element.focus();
+  viewport._createDimensions();
+  assert.equal(doc.activeElement, viewport.labels.find(({ target }) => target.key === 'diameter').element);
+  assert.notEqual(doc.activeElement, viewport.labels.find(({ target }) => target.key === 'length').element);
+  const input = doc.createElement('input');
+  input.value = '22.5';
+  input.focus();
+  viewport.setDimensionEditing(true);
+  viewport.setFeatureSelection('bore', 'inner');
+  assert.equal(doc.activeElement, input);
+  assert.equal(input.value, '22.5');
+  assert.equal(viewport.controls.enabled, false);
+});
+
+test('派生内腔长度为不可编辑文本，简化螺纹按钮只打开特征参数', () => {
+  const bore = createFeature('bore', { id: 'bore', termination: 'through-all', segments: [createBoreSegment({ id: 'inner', diameter: 20 })] });
+  const hole = createFeature('hole', { id: 'threaded', placement: 'end', diameter: 5, depth: 14,
+    thread: { enabled: true, nominal: 6, pitch: 1, length: 8 } });
+  const viewport = viewportFixture([createSegment({ id: 'outer', length: 100, diameter: 60 })], 'outer', [bore, hole]);
+  viewport.setFeatureSelection('bore', 'inner');
+  const length = viewport.labels.find(({ target }) => target.key === 'length');
+  assert.equal(length.element.tagName, 'SPAN');
+  assert.ok(length.element.textContent.includes('联动'));
+  length.element.click();
+  assert.equal(viewport.editRequests.length, 0);
+
+  viewport.setFeatureSelection('threaded');
+  const thread = viewport.labels.find(({ target }) => target.kind === 'feature-select');
+  assert.ok(thread.element.textContent.includes('简化螺纹'));
+  assert.equal(thread.element.type, 'button');
+  assert.equal(thread.element.getAttribute('aria-haspopup'), null);
+  thread.element.click();
+  assert.deepEqual(viewport.featureRequests, [{ id: 'threaded', subId: undefined, rotating: false }]);
+  assert.equal(viewport.editRequests.length, 0);
+});
+
+test('真实网格替换路径保留特征选择、完整目标与打开的输入焦点', () => {
+  const bore = createFeature('bore', { id: 'bore', segments: [createBoreSegment({ id: 'inner', length: 40, diameter: 20 })] });
+  const segments = [createSegment({ id: 'outer', length: 100, diameter: 60 })];
+  const viewport = viewportFixture(segments, 'outer', [bore]);
+  viewport.modelGroup = new THREE.Group();
+  viewport.palette.metal = 0xb9c5cf;
+  viewport.palette.edge = 0x304451;
+  viewport._center = new THREE.Vector3(50, 0, 0);
+  viewport.camera = new THREE.PerspectiveCamera(32, 1, .1, 10000);
+  viewport.controls.target = new THREE.Vector3(50, 0, 0);
+  viewport.controls.update = () => false;
+  viewport._createGround = () => {};
+  viewport.fit = () => {};
+  viewport.setFeatureSelection('bore', 'inner');
+  const input = viewport.labelLayer.ownerDocument.createElement('input');
+  input.value = '22.8';
+  input.focus();
+  viewport.setDimensionEditing(true);
+  const geometry = new THREE.BoxGeometry(100, 60, 60);
+  geometry.translate(50, 0, 0);
+  const result = { mesh: { vertices: [...geometry.attributes.position.array], normals: [...geometry.attributes.normal.array], triangles: [...geometry.index.array] },
+    stats: { length: 100, maxDiameter: 60 } };
+  viewport.setModel(result, { segments, features: [bore] });
+  assert.equal(viewport.selectedFeatureId, 'bore');
+  assert.equal(viewport.selectedFeatureSubId, 'inner');
+  assert.equal(viewport.labelLayer.ownerDocument.activeElement, input);
+  assert.equal(input.value, '22.8');
+  assert.equal(viewport.dimensionEditing, true);
+  assert.equal(viewport.controls.enabled, false);
+  assert.ok(viewport.labels.some(({ target }) => target.key === 'diameter' && target.subId === 'inner'));
+  assert.ok(viewport.labels.every(({ target }) => target.kind === 'feature-parameter'));
+  assert.ok(viewport.featureGroup.children.length > 0);
+  viewport.setDimensionEditing(false);
+  assert.equal(viewport.controls.enabled, true);
+  assert.equal(viewport.controls.autoRotate, false);
+  geometry.dispose();
 });

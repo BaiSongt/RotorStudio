@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 2,
+  "name": "杯形安装壳",
+  "partFamily": "housing",
+  "material": "steel",
+  "quality": "standard",
+  "segments": [
+    {
+      "id": "cup-base",
+      "name": "安装法兰",
+      "type": "cylinder",
+      "length": 8,
+      "diameter": 96,
+      "endDiameter": 96,
+      "chamferLeft": 0.8,
+      "chamferRight": 0,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    },
+    {
+      "id": "cup-body",
+      "name": "壳体外圆",
+      "type": "cylinder",
+      "length": 72,
+      "diameter": 80,
+      "endDiameter": 80,
+      "chamferLeft": 0,
+      "chamferRight": 0.8,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    }
+  ],
+  "keyways": [],
+  "holes": [],
+  "features": [
+    {
+      "id": "cup-cavity",
+      "type": "bore",
+      "name": "杯形盲腔",
+      "enabled": true,
+      "face": "right",
+      "offset": 0,
+      "termination": "blind",
+      "segments": [
+        {
+          "id": "cup-inner",
+          "name": "圆柱内腔",
+          "type": "cylinder",
+          "length": 62,
+          "diameter": 60,
+          "endDiameter": 60
+        }
+      ]
+    },
+    {
+      "id": "cup-radial",
+      "type": "hole",
+      "name": "M6 径向紧定孔",
+      "enabled": true,
+      "placement": "radial",
+      "face": "right",
+      "segmentId": "cup-body",
+      "position": 38,
+      "angle": 0,
+      "count": 2,
+      "pcd": 0,
+      "diameter": 5,
+      "depth": 12,
+      "termination": "through-wall",
+      "boreId": "cup-cavity",
+      "counterboreDiameter": 0,
+      "counterboreDepth": 0,
+      "thread": {
+        "enabled": true,
+        "nominal": 6,
+        "pitch": 1,
+        "hand": "right",
+        "toleranceClass": "6H",
+        "length": 6,
+        "offset": 0.5
+      }
+    },
+    {
+      "id": "cup-seal",
+      "type": "groove",
+      "name": "壳体外环槽",
+      "enabled": true,
+      "location": "outer",
+      "segmentId": "cup-body",
+      "boreId": "",
+      "boreSegmentId": "",
+      "position": 57,
+      "width": 3,
+      "depth": 1.5
+    }
+  ]
+}

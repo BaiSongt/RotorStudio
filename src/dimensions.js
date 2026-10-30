@@ -1,4 +1,5 @@
 import { LIMITS, cloneModel, validateModel } from './schema.js';
+import { getFeatureDimensions, getBoreWallInfo } from './features.js';
 
 const MIN_MODULE = 0.1;
 const MAX_MODULE = 25;
@@ -43,6 +44,18 @@ function prefixLength(model, count) {
 
 /** 返回尺寸输入框所需的值、范围和联动说明；不会改变工程。 */
 export function getDimensionSpec(model, target) {
+  if (target?.kind === 'feature-parameter') {
+    if (!Array.isArray(model?.features) || !Array.isArray(model?.segments) || !model.segments.every((s) => s && Number.isFinite(s.length))) {
+      throw new Error('当前工程缺少有效的特征或外形数组，请先修正参数。');
+    }
+    const feature = model.features.find((item) => item?.id === target.id);
+    if (!feature) throw new Error('尺寸对应的特征已不存在，请重新选择尺寸。');
+    const spec = getFeatureDimensions(model, feature).find((item) => item.key === target.key && item.subId === target.subId);
+    if (!spec) throw new Error('未找到该特征的可编辑尺寸，请重新选择标注。');
+    if (!spec.editable) throw new Error(spec.hint || '该尺寸由终止模式派生，不能独立编辑。');
+    if (![spec.value, spec.min, spec.max].every(Number.isFinite) || spec.max < spec.min) throw new Error('当前特征尺寸超出可编辑范围，请先修正参数。');
+    return { ...spec, featureId: feature.id, ...(target.subId ? { subId: target.subId } : {}) };
+  }
   const { total, index, segment } = resolveTarget(model, target);
   const name = typeof segment.name === 'string' && segment.name ? segment.name : `阶梯 ${index + 1}`;
   const common = { unit: 'mm', step: 0.1, segmentId: segment.id };
@@ -131,8 +144,36 @@ function nextPositiveFloatDown(value) {
 export function applyDimensionEdit(model, target, input) {
   const value = parseDimension(input);
   const spec = getDimensionSpec(model, target);
-  if (value < spec.min || value > spec.max) throw new Error(`${spec.title}必须在 ${spec.min}～${spec.max} mm 之间。`);
+  if (value < spec.min || value > spec.max) throw new Error(`${spec.title}必须在 ${spec.min}～${spec.max} ${spec.unit} 之间。`);
   const next = cloneModel(model);
+  if (target.kind === 'feature-parameter') {
+    const feature = next.features.find((item) => item.id === target.id);
+    if (feature.type === 'bore') {
+      if (target.key === 'offset') feature.offset = value;
+      else if (target.key === 'bottomThickness') {
+        feature.segments.at(-1).length = decimalSum([
+          ...next.segments.map((segment) => segment.length), -feature.offset,
+          ...feature.segments.slice(0, -1).map((segment) => -segment.length), -value,
+        ]);
+      } else {
+        const segment = feature.segments.find((item) => item.id === target.subId);
+        if (target.key === 'wallThickness') {
+          const wall = getBoreWallInfo(next, feature, target.subId);
+          if (!wall) throw new Error('当前内外轮廓不能通过单一壁厚驱动，请编辑内径。');
+          segment.diameter = decimalProduct([2, decimalSum([wall.outerRadius, -value])]);
+        } else if (['length', 'diameter', 'endDiameter'].includes(target.key)) segment[target.key] = value;
+        else throw new Error('该内腔尺寸不能直接编辑。');
+      }
+    } else if (feature.type === 'hole' && ['thread.length', 'thread.offset'].includes(target.key)) {
+      feature.thread[target.key.slice(7)] = value;
+    } else {
+      // key 必须已由 getFeatureDimensions 白名单解析，不能借任意属性路径修改工程。
+      feature[target.key] = value;
+    }
+    const { errors } = validateModel(next);
+    if (errors.length) throw new Error(errors.join('\n'));
+    return next;
+  }
   const { index, segment } = resolveTarget(next, target);
   switch (target.kind) {
     case 'segment-length':

@@ -1,0 +1,28 @@
+{
+  "presetId": "cup-housing",
+  "name": "杯形安装壳",
+  "schemaVersion": 2,
+  "partFamily": "housing",
+  "units": {
+    "length": "mm",
+    "area": "mm²",
+    "volume": "mm³"
+  },
+  "volume": 242837.85438161768,
+  "area": 47358.30143966521,
+  "solids": 1,
+  "faces": 15,
+  "length": 80,
+  "maxDiameter": 96,
+  "triangles": 2734,
+  "warnings": [
+    "M6 径向紧定孔（cup-radial）仅保存螺纹规格与底孔实体，未生成真实牙形或制造级螺纹标注。"
+  ],
+  "stepValidation": {
+    "valid": true,
+    "solids": 1,
+    "volume": 242837.85438161678,
+    "relativeVolumeError": 3.715313440139837e-15,
+    "byteLength": 88736
+  }
+}

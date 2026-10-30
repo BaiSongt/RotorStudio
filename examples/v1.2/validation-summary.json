@@ -1,0 +1,82 @@
+[
+  {
+    "presetId": "flange-disk",
+    "name": "六孔法兰盘",
+    "schemaVersion": 2,
+    "partFamily": "disk",
+    "units": {
+      "length": "mm",
+      "area": "mm²",
+      "volume": "mm³"
+    },
+    "volume": 144763.84387276124,
+    "area": 27078.842866575378,
+    "solids": 1,
+    "faces": 30,
+    "length": 30,
+    "maxDiameter": 100,
+    "triangles": 5712,
+    "warnings": [],
+    "stepValidation": {
+      "valid": true,
+      "solids": 1,
+      "volume": 144763.84387276266,
+      "relativeVolumeError": 9.851131706846617e-15,
+      "byteLength": 72674
+    }
+  },
+  {
+    "presetId": "independent-sleeve",
+    "name": "独立内阶梯套",
+    "schemaVersion": 2,
+    "partFamily": "sleeve",
+    "units": {
+      "length": "mm",
+      "area": "mm²",
+      "volume": "mm³"
+    },
+    "volume": 169857.60762594792,
+    "area": 34651.806945043405,
+    "solids": 1,
+    "faces": 23,
+    "length": 100,
+    "maxDiameter": 62,
+    "triangles": 3200,
+    "warnings": [],
+    "stepValidation": {
+      "valid": true,
+      "solids": 1,
+      "volume": 169857.60762594445,
+      "relativeVolumeError": 2.038975982740875e-14,
+      "byteLength": 56068
+    }
+  },
+  {
+    "presetId": "cup-housing",
+    "name": "杯形安装壳",
+    "schemaVersion": 2,
+    "partFamily": "housing",
+    "units": {
+      "length": "mm",
+      "area": "mm²",
+      "volume": "mm³"
+    },
+    "volume": 242837.85438161768,
+    "area": 47358.30143966521,
+    "solids": 1,
+    "faces": 15,
+    "length": 80,
+    "maxDiameter": 96,
+    "triangles": 2734,
+    "warnings": [
+      "M6 径向紧定孔（cup-radial）仅保存螺纹规格与底孔实体，未生成真实牙形或制造级螺纹标注。"
+    ],
+    "stepValidation": {
+      "valid": true,
+      "solids": 1,
+      "volume": 242837.85438161678,
+      "relativeVolumeError": 3.715313440139837e-15,
+      "byteLength": 88736
+    }
+  }
+]

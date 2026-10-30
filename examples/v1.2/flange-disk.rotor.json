@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 2,
+  "name": "六孔法兰盘",
+  "partFamily": "disk",
+  "material": "steel",
+  "quality": "standard",
+  "segments": [
+    {
+      "id": "disk-flange",
+      "name": "法兰盘体",
+      "type": "cylinder",
+      "length": 18,
+      "diameter": 100,
+      "endDiameter": 100,
+      "chamferLeft": 0.8,
+      "chamferRight": 0,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    },
+    {
+      "id": "disk-hub",
+      "name": "定位轮毂",
+      "type": "cylinder",
+      "length": 12,
+      "diameter": 54,
+      "endDiameter": 54,
+      "chamferLeft": 0,
+      "chamferRight": 0.6,
+      "gear": {
+        "teeth": 24,
+        "module": 2,
+        "pressureAngle": 20,
+        "rotation": 0,
+        "addendum": 1,
+        "dedendum": 1.25,
+        "backlash": 0
+      }
+    }
+  ],
+  "keyways": [],
+  "holes": [],
+  "features": [
+    {
+      "id": "disk-bore",
+      "type": "bore",
+      "name": "中心定位通孔",
+      "enabled": true,
+      "face": "left",
+      "offset": 0,
+      "termination": "through-all",
+      "segments": [
+        {
+          "id": "disk-inner",
+          "name": "中心孔",
+          "type": "cylinder",
+          "length": 30,
+          "diameter": 28,
+          "endDiameter": 28
+        }
+      ]
+    },
+    {
+      "id": "disk-bolts",
+      "type": "hole",
+      "name": "法兰六孔阵列",
+      "enabled": true,
+      "placement": "end",
+      "face": "left",
+      "segmentId": "",
+      "position": 15,
+      "angle": 0,
+      "count": 6,
+      "pcd": 76,
+      "diameter": 6.6,
+      "depth": 12,
+      "termination": "through-all",
+      "boreId": "",
+      "counterboreDiameter": 11,
+      "counterboreDepth": 4,
+      "thread": {
+        "enabled": false,
+        "nominal": 6,
+        "pitch": 1,
+        "hand": "right",
+        "toleranceClass": "6H",
+        "length": 8,
+        "offset": 0
+      }
+    },
+    {
+      "id": "disk-groove",
+      "type": "groove",
+      "name": "轮毂外环槽",
+      "enabled": true,
+      "location": "outer",
+      "segmentId": "disk-hub",
+      "boreId": "",
+      "boreSegmentId": "",
+      "position": 4,
+      "width": 2,
+      "depth": 1
+    }
+  ]
+}

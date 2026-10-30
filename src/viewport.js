@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
+import { getFeatureView } from './feature-view.js';
 
 const PALETTES = {
   light: {
@@ -67,14 +68,20 @@ function lineGeometry(coordinates) {
 export function createDimensionButton({ documentRef = globalThis.document, text, target, label, onActivate }) {
   const element = documentRef.createElement('button');
   const editTarget = Object.freeze({ ...target });
+  const selectFeature = editTarget.kind === 'feature-select';
   element.type = 'button';
   element.textContent = text;
-  element.className = 'rotor-dimension-label is-editable';
+  element.className = `rotor-dimension-label ${selectFeature ? 'is-feature-link' : 'is-editable'}`;
   element.dataset.dimensionKind = editTarget.kind;
-  if (editTarget.id) element.dataset.segmentId = editTarget.id;
-  element.title = `${label}；点击或按 Enter / 空格编辑`;
-  element.setAttribute('aria-label', `编辑${label}`);
-  element.setAttribute('aria-haspopup', 'dialog');
+  if (editTarget.id) {
+    if (editTarget.kind === 'feature-parameter' || selectFeature) element.dataset.featureId = editTarget.id;
+    else element.dataset.segmentId = editTarget.id;
+  }
+  if (editTarget.key) element.dataset.dimensionKey = editTarget.key;
+  if (editTarget.subId) element.dataset.dimensionSubId = editTarget.subId;
+  element.title = `${label}；点击或按 Enter / 空格${selectFeature ? '查看特征参数' : '编辑'}`;
+  element.setAttribute('aria-label', `${selectFeature ? '查看' : '编辑'}${label}`);
+  if (!selectFeature) element.setAttribute('aria-haspopup', 'dialog');
   element.style.pointerEvents = 'auto';
   element.style.touchAction = 'manipulation';
 
@@ -99,11 +106,12 @@ export function createDimensionButton({ documentRef = globalThis.document, text,
 
 /** 单一 Three.js 场景；所有建模坐标与显示尺寸均使用毫米。 */
 export class PartViewport {
-  constructor(container, { onSelect = () => {}, onAutoRotateChange = () => {}, onDimensionEdit = () => {} } = {}) {
+  constructor(container, { onSelect = () => {}, onAutoRotateChange = () => {}, onDimensionEdit = () => {}, onFeatureSelect = () => {} } = {}) {
     this.container = container;
     this.onSelect = onSelect;
     this.onAutoRotateChange = onAutoRotateChange;
     this.onDimensionEdit = onDimensionEdit;
+    this.onFeatureSelect = onFeatureSelect;
     this.theme = 'light';
     this.palette = PALETTES.light;
     this.mode = 'edges';
@@ -111,6 +119,8 @@ export class PartViewport {
     this.dimensionEditing = false;
     this.sectionEnabled = false;
     this.selectedId = null;
+    this.selectedFeatureId = null;
+    this.selectedFeatureSubId = null;
     this.model = null;
     this.layout = [];
     this.width = 1;
@@ -146,7 +156,7 @@ export class PartViewport {
     this.renderer.localClippingEnabled = true;
     this.renderer.domElement.className = 'rotor-canvas';
     this.renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;outline:none;touch-action:none;';
-    this.renderer.domElement.setAttribute('aria-label', '零件三维视图，左键旋转、右键平移、滚轮缩放，单击选择阶梯');
+    this.renderer.domElement.setAttribute('aria-label', '零件三维视图，左键旋转、右键平移、滚轮缩放，单击选择阶梯或特征辅助标记');
     this.renderer.domElement.setAttribute('role', 'img');
     container.appendChild(this.renderer.domElement);
 
@@ -191,6 +201,9 @@ export class PartViewport {
     this.dimensionGroup = new THREE.Group();
     this.dimensionGroup.name = '显示尺寸';
     this.scene.add(this.dimensionGroup);
+    this.featureGroup = new THREE.Group();
+    this.featureGroup.name = '特征辅助定位';
+    this.scene.add(this.featureGroup);
     this.sectionPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
 
     this.labelLayer = document.createElement('div');
@@ -217,6 +230,11 @@ export class PartViewport {
       const start = this._pointerStart;
       this._pointerStart = null;
       if (!start || start.button !== 0 || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5) return;
+      if (this._pickFeature(event)) {
+        this.setAutoRotate(false);
+        this.onFeatureSelect(this.selectedFeatureId, this.selectedFeatureSubId || undefined);
+        return;
+      }
       const segment = this._pick(event);
       if (segment) this.onSelect(segment.id);
     }, options);
@@ -224,7 +242,7 @@ export class PartViewport {
       if (event.buttons) return;
       if (performance.now() - (this._lastHoverPick || 0) < 50) return;
       this._lastHoverPick = performance.now();
-      canvas.style.cursor = this._pick(event) ? 'pointer' : 'grab';
+      canvas.style.cursor = this._pickFeature(event) || this._pick(event) ? 'pointer' : 'grab';
     }, options);
     canvas.addEventListener('dblclick', () => this.fit(), options);
     canvas.addEventListener('contextmenu', (event) => event.preventDefault(), options);
@@ -239,6 +257,17 @@ export class PartViewport {
     const hit = hits.find((item) => !this.sectionEnabled || this.sectionPlane.distanceToPoint(item.point) >= -1e-5);
     if (!hit) return null;
     return this.layout.find((item) => hit.point.x >= item.start - 1e-4 && hit.point.x <= item.end + 1e-4) || null;
+  }
+
+  _pickFeature(event) {
+    if (!this.featureGroup?.visible || !this.featureGroup.children.length || !this.selectedFeatureId) return false;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this._pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+    this._raycaster.setFromCamera(this._pointer, this.camera);
+    // 维持约四个屏幕像素的命中宽度，避免小孔的辅助线过分难选或遮住整段轴。
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    this._raycaster.params.Line.threshold = 8 * distance * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) / Math.max(1, rect.height);
+    return this._raycaster.intersectObjects(this.featureGroup.children, false).length > 0;
   }
 
   _createGround() {
@@ -379,7 +408,8 @@ export class PartViewport {
     this._createGround();
     this.setMode(this.mode);
     this.setSection(this.sectionEnabled);
-    this.setSelection(this.selectedId);
+    if (this.selectedFeatureId) this.setFeatureSelection(this.selectedFeatureId, this.selectedFeatureSubId);
+    else this.setSelection(this.selectedId);
 
     // 连续修改参数时保留观察角度；尺寸明显改变时重新适配视野。
     const sizeChanged = this.length / previousLength > 1.3 || this.length / previousLength < 0.7 || this.radius / previousRadius > 1.4;
@@ -395,6 +425,9 @@ export class PartViewport {
 
   setSelection(segmentId) {
     this.selectedId = segmentId;
+    this.selectedFeatureId = null;
+    this.selectedFeatureSubId = null;
+    if (this.featureGroup) while (this.featureGroup.children.length) releaseObject(this.featureGroup.children[0]);
     if (this.selection) {
       releaseObject(this.selection);
       this.selection = null;
@@ -421,21 +454,66 @@ export class PartViewport {
     this.dirty = true;
   }
 
-  _label(text, position, { accent = false, name = false, target, label } = {}) {
-    const element = createDimensionButton({
-      documentRef: this.labelLayer.ownerDocument,
-      text,
-      target,
-      label,
-      onActivate: (editTarget, anchorElement) => {
-        this.setAutoRotate(false);
-        this.onDimensionEdit(editTarget, anchorElement);
-      },
-    });
+  setFeatureSelection(featureId, subId) {
+    this.selectedFeatureId = featureId || null;
+    this.selectedFeatureSubId = subId || null;
+    if (this.selection) {
+      releaseObject(this.selection);
+      this.selection = null;
+    }
+    if (this.featureGroup) {
+      while (this.featureGroup.children.length) releaseObject(this.featureGroup.children[0]);
+      const view = getFeatureView(this.model, featureId, subId);
+      if (view.markers.length) {
+        // 半透明虚线表达被选特征的定义范围；不填充实体，也不模拟螺纹牙形。
+        const dash = Math.max(.7, this.radius * .04);
+        const marker = new THREE.LineSegments(lineGeometry(view.markers), new THREE.LineDashedMaterial({
+          color: this.palette.accent, transparent: true, opacity: .66,
+          dashSize: dash, gapSize: dash * .65, depthTest: false, depthWrite: false,
+        }));
+        marker.name = '选中特征定位轮廓';
+        marker.computeLineDistances();
+        marker.renderOrder = 3;
+        this.featureGroup.add(marker);
+      }
+    }
+    this._createDimensions();
+    this.dirty = true;
+  }
+
+  _label(text, position, { accent = false, name = false, target, label, editable = true } = {}) {
+    let element;
+    if (editable) {
+      element = createDimensionButton({
+        documentRef: this.labelLayer.ownerDocument,
+        text,
+        target,
+        label,
+        onActivate: (editTarget, anchorElement) => {
+          this.setAutoRotate(false);
+          if (editTarget.kind === 'feature-select') this.onFeatureSelect?.(editTarget.id, editTarget.subId);
+          else this.onDimensionEdit(editTarget, anchorElement);
+        },
+      });
+    } else {
+      element = this.labelLayer.ownerDocument.createElement('span');
+      element.textContent = `${text} · 联动`;
+      element.className = 'rotor-dimension-label is-derived';
+      element.title = label;
+      element.setAttribute('aria-label', label);
+    }
     if (accent) element.classList.add('is-selected');
-    element.style.cssText = `position:absolute;left:0;top:0;transform:translate(-50%,-50%);white-space:nowrap;font:500 ${name ? 11 : 10}px/1.4 ui-monospace,SFMono-Regular,Consolas,"Microsoft YaHei",monospace;color:var(--dimension-label-color,${accent ? `#${new THREE.Color(this.palette.accent).getHexString()}` : this.palette.label});background:var(--dimension-label-bg,${this.palette.labelBackground});border:1px solid var(--dimension-label-border,transparent);padding:2px 5px;margin:0;border-radius:3px;letter-spacing:.01em;pointer-events:auto;touch-action:manipulation;cursor:text;appearance:none;`;
+    const cursor = !editable ? 'default' : target?.kind === 'feature-select' ? 'pointer' : 'text';
+    element.style.cssText = `position:absolute;left:0;top:0;transform:translate(-50%,-50%);white-space:nowrap;font:500 ${name ? 11 : 10}px/1.4 ui-monospace,SFMono-Regular,Consolas,"Microsoft YaHei",monospace;color:var(--dimension-label-color,${accent ? `#${new THREE.Color(this.palette.accent).getHexString()}` : this.palette.label});background:var(--dimension-label-bg,${this.palette.labelBackground});border:1px solid var(--dimension-label-border,transparent);padding:2px 5px;margin:0;border-radius:3px;letter-spacing:.01em;pointer-events:${editable ? 'auto' : 'none'};touch-action:manipulation;cursor:${cursor};appearance:none;`;
     this.labelLayer.appendChild(element);
-    this.labels.push({ element, position: new THREE.Vector3(...position), target: { ...target } });
+    this.labels.push({ element, position: new THREE.Vector3(...position), target: { ...target }, editable });
+  }
+
+  _restoreDimensionFocus(target) {
+    if (!target || !this.dimensionsVisible) return;
+    const replacement = this.labels.find((label) => label.editable !== false &&
+      ['kind', 'id', 'key', 'subId'].every((key) => (label.target[key] || '') === (target[key] || '')));
+    replacement?.element.focus({ preventScroll: true });
   }
 
   _createDimensions() {
@@ -448,6 +526,23 @@ export class PartViewport {
     this.dimensionGroup.visible = this.dimensionsVisible;
     this.labelLayer.style.display = this.dimensionsVisible ? '' : 'none';
     if (!this.model) return;
+
+    if (this.selectedFeatureId) {
+      const view = getFeatureView(this.model, this.selectedFeatureId, this.selectedFeatureSubId);
+      const coordinates = [];
+      view.dimensions.forEach((item) => {
+        coordinates.push(...item.lines);
+        this._label(item.text, item.position, { accent: true, target: item.target, label: item.label, editable: item.editable });
+      });
+      view.annotations.forEach((item) => this._label(item.text, item.position, { accent: true, name: true, target: item.target, label: item.label }));
+      if (coordinates.length) {
+        const lines = new THREE.LineSegments(lineGeometry(coordinates), new THREE.LineBasicMaterial({ color: this.palette.accent, transparent: true, opacity: .78, depthTest: false, depthWrite: false }));
+        lines.renderOrder = 4;
+        this.dimensionGroup.add(lines);
+      }
+      this._restoreDimensionFocus(focusedTarget);
+      return;
+    }
 
     const points = [];
     const accentPoints = [];
@@ -514,10 +609,7 @@ export class PartViewport {
       lines.renderOrder = 4;
       this.dimensionGroup.add(lines);
     });
-    if (focusedTarget && this.dimensionsVisible) {
-      const replacement = this.labels.find(({ target }) => target.kind === focusedTarget.kind && (target.id || '') === (focusedTarget.id || ''));
-      replacement?.element.focus({ preventScroll: true });
-    }
+    this._restoreDimensionFocus(focusedTarget);
   }
 
   _updateLabels() {
@@ -538,15 +630,22 @@ export class PartViewport {
     const verticalTangent = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
     const horizontalTangent = verticalTangent * this.camera.aspect;
     let distance = 1;
+    const include = (point) => {
+      const depth = point.dot(direction);
+      distance = Math.max(distance, Math.abs(point.dot(right)) / horizontalTangent + depth, Math.abs(point.dot(vertical)) / verticalTangent + depth);
+    };
     // 按当前观察方向投影包围盒，避免长轴与窄视口被裁切。
     for (const x of [-this.length / 2, this.length / 2]) {
       for (const y of [-this.radius * 1.65, this.radius * 1.2]) {
         for (const z of [-this.radius, this.radius * 1.3]) {
           const corner = new THREE.Vector3(x, y, z);
-          const depth = corner.dot(direction);
-          distance = Math.max(distance, Math.abs(corner.dot(right)) / horizontalTangent + depth, Math.abs(corner.dot(vertical)) / verticalTangent + depth);
+          include(corner);
         }
       }
+    }
+    // 特征尺寸可在端面之外；适配窗口时一并纳入当前可见标注的锚点。
+    if (this.selectedFeatureId && this.dimensionsVisible) {
+      this.labels.forEach(({ position }) => include(position.clone().sub(this._center)));
     }
     return distance * 1.25;
   }
@@ -658,7 +757,8 @@ export class PartViewport {
     if (this.edges) this.edges.material.color.set(this.palette.edge);
     this._createGround();
     this.setMode(this.mode);
-    this.setSelection(this.selectedId);
+    if (this.selectedFeatureId) this.setFeatureSelection(this.selectedFeatureId, this.selectedFeatureSubId);
+    else this.setSelection(this.selectedId);
     this.dirty = true;
   }
 

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSegment, createKeyway, createHole, DEFAULT_MODEL, cloneModel, getSegmentLayout, getModelBounds, validateModel } from '../src/schema.js';
 import { getDimensionSpec, applyDimensionEdit } from '../src/dimensions.js';
+import { createFeature, createBoreSegment, getBoreLayout, ROTATIONAL_PRESETS } from '../src/features.js';
 
 function modelWith(segments = [createSegment({ id: 's1', name: '试件', length: 100, diameter: 40, endDiameter: 40 })]) {
   return { schemaVersion: 1, name: '尺寸编辑试件', material: 'steel', quality: 'standard', segments, keyways: [], holes: [] };
@@ -170,4 +171,92 @@ test('编辑长度检查倒角相交、盲孔深度与全局规模限制', () =>
   assert.equal(getDimensionSpec(long, { kind: 'segment-length', id: 's0' }).max, 2000);
   assert.equal(getDimensionSpec(long, { kind: 'total-length' }).max, 10000);
   unchangedAfterFailure(long, { kind: 'total-length' }, 10000.1, /必须在/);
+});
+
+function cavityModel() {
+  const model = modelWith([createSegment({ id: 's1', name: '杯形外圆', length: 100, diameter: 60, endDiameter: 60 })]);
+  return { ...model, schemaVersion: 2, partFamily: 'housing', features: [createFeature('bore', {
+    id: 'bore', name: '盲腔', face: 'right', segments: [
+      createBoreSegment({ id: 'inner-first', name: '入口内圆', length: 20, diameter: 40, endDiameter: 40 }),
+      createBoreSegment({ id: 'inner-last', name: '末内圆', length: 40, diameter: 30, endDiameter: 30 }),
+    ],
+  })] };
+}
+const ft = (key, subId, id = 'bore') => ({ kind: 'feature-parameter', id, key, ...(subId ? { subId } : {}) });
+
+test('内阶梯尺寸驱动保持外轮廓独立，精确保存输入且不改隐藏末端草稿', () => {
+  const model = cavityModel(), before = cloneModel(model);
+  const spec = getDimensionSpec(model, ft('diameter', 'inner-last'));
+  assert.equal(spec.featureId, 'bore'); assert.equal(spec.subId, 'inner-last'); assert.equal(spec.unit, 'mm');
+  const next = applyDimensionEdit(model, ft('diameter', 'inner-last'), '31.123456789');
+  assert.equal(next.features[0].segments[1].diameter, 31.123456789);
+  assert.equal(next.features[0].segments[1].endDiameter, 30);
+  assert.deepEqual(next.segments, model.segments);
+  assert.deepEqual(model, before);
+  const longer = applyDimensionEdit(next, ft('length', 'inner-first'), '24.123456789');
+  assert.equal(longer.features[0].segments[0].length, 24.123456789);
+  assert.equal(longer.features[0].segments[1].length, 40);
+  assert.deepEqual(longer.segments, model.segments);
+});
+
+test('壁厚固定外径只逆算当前内径，底厚固定外形只改最后内段长度', () => {
+  const model = cavityModel();
+  const wall = applyDimensionEdit(model, ft('wallThickness', 'inner-first'), '12.123456789');
+  assert.equal(wall.features[0].segments[0].diameter, 35.753086422);
+  assert.deepEqual(wall.segments, model.segments);
+  assert.equal(wall.features[0].segments[0].endDiameter, 40);
+  const bottom = applyDimensionEdit(model, ft('bottomThickness'), '30.123456789');
+  assert.equal(bottom.features[0].segments[1].length, 49.876543211);
+  assert.deepEqual(bottom.features[0].segments[0], model.features[0].segments[0]);
+  assert.deepEqual(bottom.segments, model.segments);
+  unchangedAfterFailure(model, ft('diameter', 'inner-first'), 61, /壁厚/);
+  unchangedAfterFailure(model, ft('bottomThickness'), 0, /必须在/);
+});
+
+test('贯穿末段长度与径向穿壁厚度是只读尺寸，入口偏移与外总长仍联动派生', () => {
+  const model = cavityModel(); model.features[0].termination = 'through-all';
+  unchangedAfterFailure(model, ft('length', 'inner-last'), 30, /贯穿内腔.*不能独立编辑/);
+  const next = applyDimensionEdit(model, ft('offset'), 5);
+  assert.equal(getBoreLayout(next, next.features[0]).at(-1).length, 75);
+  assert.equal(next.features[0].segments[1].length, 40);
+  const total = applyDimensionEdit(next, { kind: 'total-length' }, 110);
+  assert.equal(getBoreLayout(total, total.features[0]).at(-1).length, 85);
+  assert.equal(total.features[0].segments[1].length, 40);
+  const cup = cloneModel(ROTATIONAL_PRESETS.find((p) => p.id === 'cup-housing').model);
+  unchangedAfterFailure(cup, ft('wallThickness', undefined, 'cup-radial'), 11, /派生|近侧壁/);
+  unchangedAfterFailure(cup, ft('depth', undefined, 'cup-radial'), 11, /未找到.*尺寸/);
+});
+
+test('内腔修改导致已有内槽或穿壁孔超界会拒绝，状态与关联尺寸完全不变', () => {
+  const model = cavityModel();
+  model.features.push(createFeature('internal-keyway', { id: 'key', boreId: 'bore', boreSegmentId: 'inner-last', position: 20, length: 15, width: 6, depth: 2 }));
+  unchangedAfterFailure(model, ft('length', 'inner-last'), 25, /轴向范围超出/);
+  const cup = cloneModel(ROTATIONAL_PRESETS.find((p) => p.id === 'cup-housing').model);
+  unchangedAfterFailure(cup, ft('position', undefined, 'cup-radial'), 10, /同一内圆柱/);
+  unchangedAfterFailure(cup, ft('diameter', 'cup-inner', 'cup-cavity'), 76, /有效螺纹长度|连续壁厚/);
+});
+
+test('特征角度、孔阵列数量与螺纹语义尺寸按各自单位编辑并严格校验', () => {
+  const model = cloneModel(ROTATIONAL_PRESETS.find((p) => p.id === 'cup-housing').model);
+  const angleTarget = ft('angle', undefined, 'cup-radial');
+  assert.equal(getDimensionSpec(model, angleTarget).unit, '°');
+  const next = applyDimensionEdit(model, angleTarget, '37.123456789');
+  assert.equal(next.features[1].angle, 37.123456789);
+  const thread = applyDimensionEdit(next, ft('thread.length', undefined, 'cup-radial'), 5.25);
+  assert.equal(thread.features[1].thread.length, 5.25);
+  assert.equal(thread.features[1].diameter, model.features[1].diameter);
+  unchangedAfterFailure(model, ft('count', undefined, 'cup-radial'), 1.5, /整数/);
+  unchangedAfterFailure(model, ft('thread.offset', undefined, 'cup-radial'), 0, /螺纹起始偏移/);
+});
+
+test('特征尺寸目标只接受白名单，输入攻击与失效引用不得污染工程', () => {
+  const model = cavityModel();
+  for (const key of ['__proto__', 'constructor', 'enabled', 'type', 'segments', 'thread.__proto__']) {
+    unchangedAfterFailure(model, ft(key), 20, /未找到.*尺寸/);
+  }
+  for (const value of ['', '20 mm', '1e2', Infinity, NaN, { valueOf: () => 10 }]) {
+    unchangedAfterFailure(model, ft('diameter', 'inner-first'), value, /尺寸|十进制|有限|数字/);
+  }
+  unchangedAfterFailure(model, ft('diameter', 'missing'), 20, /未找到.*尺寸/);
+  unchangedAfterFailure(model, ft('diameter', 'inner-first', 'gone'), 20, /已不存在/);
 });
